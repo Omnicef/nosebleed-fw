@@ -14,6 +14,7 @@ Build it by following the phased plan in `PLAN.md` — **do not jump ahead**; ea
 
 ## Hardware (fixed — do not re-litigate)
 
+- **PlatformIO board ID:** `esp32-s3-devkitc1-n16r8` — **not** `esp32-s3-devkitc-1`, which is an N8 part with no PSRAM. `board_build.flash_size` is ignored by pioarduino; it reads `upload.flash_size`. Getting this wrong produces a silently degraded 8 MB no-PSRAM build. Always confirm against the boot log, never the config file.
 - **MCU:** ESP32-S3-WROOM-1 **N16R8** — 16 MB quad flash, 8 MB **octal** PSRAM, dual Xtensa LX7 @ 240 MHz, 512 KB internal SRAM, native USB, 2.4 GHz WiFi + BLE 5.
 - **Panel:** HUB75, default 64×32, 1/16 scan. **Never hardcode 64×32** — read from config.
 - **Adapter:** DevKitC-1 carrier with a **74HCT245** level shifter. ESP32 GPIO is 3.3 V; HUB75 wants 5 V logic.
