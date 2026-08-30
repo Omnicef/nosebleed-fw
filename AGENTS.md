@@ -91,6 +91,7 @@ DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **1
 
 ```
 nosebleed-fw/
+├── .github/workflows/ci.yml  # purity + native tests + esp32s3 build
 ├── AGENTS.md                 # this file — the real guidance
 ├── CLAUDE.md                 # one-line stub: @AGENTS.md
 ├── PLAN.md
@@ -101,7 +102,8 @@ nosebleed-fw/
 ├── opencode.json             # lsp + instructions for opencode
 ├── wokwi.toml                # simulator config — logic only, see PLAN.md §4
 ├── diagram.json              # S3 board as N16R8: 16 MB flash, 8 MB octal PSRAM
-├── tools/                    # HOST-side Python build tools
+├── tools/                    # HOST-side build tooling
+│   ├── check_render_purity.sh  # T-1.6 guard, run by CI and pre-action
 │   ├── build_logos.py        # Pillow pipeline → logos.bin
 │   ├── build_fonts.py        # BDF → C glyph tables
 │   ├── build_tzmap.py        # IANA → POSIX TZ table

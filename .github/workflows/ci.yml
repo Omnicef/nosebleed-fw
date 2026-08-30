@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Nosebleed CI.
+#
+# Every step degrades gracefully before the code it checks exists, so this is
+# green on a docs-only repo and becomes meaningful as each phase lands.
+#
+# Not here yet: the Wokwi logic job (T-1.8, needs a WOKWI_CLI_TOKEN secret) and
+# the hard memory gate (needs a real threshold from T-0.7 — see `size` below).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------- purity --
+  # Seconds, no toolchain. Fastest signal that an agent drifted from the
+  # architecture rule that makes the Phase 9 IDF conversion cheap.
+  purity:
+    name: Render-layer purity (T-1.6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/check_render_purity.sh
+
+  # ---------------------------------------------------------------- native --
+  # The render tests. No ESP32 toolchain needed, so this stays fast and is the
+  # job that actually catches pixel-parity regressions.
+  native:
+    name: Render + parser tests (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-native-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-native-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Run host tests
+        run: |
+          if [ ! -f platformio.ini ]; then
+            echo "::notice::platformio.ini not present yet — skipping (pre-T-1.1)"
+            exit 0
+          fi
+          if ! grep -q '^\[env:native\]' platformio.ini; then
+            echo "::notice::env:native not defined yet — skipping (pre-T-2.6)"
+            exit 0
+          fi
+          pio test -e native
+
+      # Render tests write PNGs. Keeping them as artifacts means a failed
+      # pixel-parity check can be eyeballed instead of guessed at.
+      - name: Upload render output
+        if: always() && hashFiles('test/out/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-output
+          path: test/out/
+          retention-days: 14
+
+  # -------------------------------------------------------------- firmware --
+  # Does it compile for the real target? This alone catches the dominant
+  # failure mode for a local model on an unfamiliar platform: a plausible but
+  # wrong esp_*/HUB75/ArduinoJson signature.
+  firmware:
+    name: Build esp32s3
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-esp32s3-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-esp32s3-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        id: build
+        run: |
+          if [ ! -f platformio.ini ]; then
+            echo "::notice::platformio.ini not present yet — skipping (pre-T-1.1)"
+            echo "built=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          pio run -e esp32s3 2>&1 | tee build.log
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
+      # Static footprint only. PlatformIO's RAM figure is .data + .bss — it does
+      # NOT include runtime heap, so it cannot verify the AGENTS.md budget on its
+      # own. What it does catch is steady erosion of internal DRAM, 3 KB at a
+      # time, which is exactly how a documented budget quietly stops holding.
+      # Runtime peak stays the job of on-device logging and the T-11.2 soak.
+      - name: Memory report
+        if: steps.build.outputs.built == 'true'
+        run: |
+          echo "### Static footprint" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(RAM|Flash):' build.log >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "_Static only — excludes runtime heap. See AGENTS.md budget._" >> "$GITHUB_STEP_SUMMARY"
+
+          # TODO(T-0.7): set a real ceiling once the spike measures one, then
+          # flip this from a warning to a hard failure.
+          #
+          # LIMIT_BYTES=180000
+          # USED=$(grep -oP '^RAM:.*?used \K[0-9]+' build.log || echo 0)
+          # if [ "$USED" -gt "$LIMIT_BYTES" ]; then
+          #   echo "::error::static RAM ${USED}B exceeds ${LIMIT_BYTES}B"
+          #   exit 1
+          # fi
+
+      - name: Upload build log
+        if: always() && steps.build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 14

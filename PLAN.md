@@ -166,7 +166,7 @@ web       data spiffs            0x100000
 **T-1.5 — Task topology.** Create the four tasks with the exact cores, priorities and stack sizes in `AGENTS.md`. Each logs a heartbeat with its core ID and stack high-water mark.
 *Accept:* log confirms `render` on core 1 and the other three on core 0. High-water marks leave >25% headroom.
 
-**T-1.6 — Purity guard.** A script (run in CI and as a PlatformIO pre-action) that greps `lib/render/` for `Arduino.h`, `esp_`, `String`, `WiFi`, and fails the build on a hit.
+**T-1.6 — Purity guard.** `tools/check_render_purity.sh` (run in CI and as a PlatformIO pre-action) greps `lib/render/` for `Arduino.h`, `esp_*.h`, `freertos/`, `WiFi.h`, `nvs*.h` and the Arduino `String` type, and fails the build on a hit. The script exists already and no-ops until `lib/render/` appears.
 *Accept:* passes clean; deliberately adding `#include <Arduino.h>` to a render file fails the build.
 
 **T-1.7 — Agent tooling.** Generate `compile_commands.json` via `pio run -t compiledb` so clangd can resolve include paths; without it LSP diagnostics on this project are noise. Add `opencode.json` with `"lsp": true` and `instructions` pointing at `docs/arduinojson-v7.md`. Regenerate compiledb whenever a library is added.
@@ -186,7 +186,11 @@ Wire up `wokwi/wokwi-ci-action@v1` so network, JSON, NVS and task-topology logic
 Known going in: ESPAsyncWebServer (ESP32Async fork) is **LGPL-3.0** — compatible, combines into GPLv3, and its §4 relinking obligation is satisfied by publishing source. ESP-IDF is Apache-2.0, which is GPLv3-compatible but **not** GPLv2-compatible — a concrete reason this project is v3. ArduinoJson and StreamUtils are MIT; Adafruit_GFX is BSD. `ESP32-HUB75-MatrixPanel-DMA` is MIT — compatible. The whole tree clears; this task is confirmation and record-keeping, not a gate. Fill in versions and tick off every row of `docs/DEPENDENCY-LICENCES.md`, paying attention to the one open question there: whether the Arduino-ESP32 core's LGPL-2.1 notice carries an "or any later version" clause. Also carry over `LICENSE.spleen.txt` and `LICENSE.tom-thumb.txt` from the Python into `assets/fonts/` — `tools/build_fonts.py` turns those glyphs into C tables and the attribution obligation follows them into the firmware.
 *Accept:* every row in `docs/DEPENDENCY-LICENCES.md` has a version and a confirmation note; no incompatible licence present; font licences committed to `assets/fonts/`.
 
-**T-1.10 — Commit.** `Phase 1: skeleton, partitions, task topology, render-purity guard, agent tooling, Wokwi CI, licence audit`
+**T-1.10 — CI workflow.** `.github/workflows/ci.yml` exists with three jobs: **purity** (T-1.6 script, seconds, no toolchain), **native** (`pio test -e native`, uploads `test/out/` PNGs as artifacts so a pixel-parity failure can be eyeballed), and **firmware** (`pio run -e esp32s3`). Every step no-ops cleanly before the code it checks exists, so CI is green today and sharpens as phases land. Two follow-ons: add the Wokwi job at **T-1.8** once `WOKWI_CLI_TOKEN` is a repo secret, and turn the memory report into a hard gate once **T-0.7** supplies a real ceiling — the `TODO` and the commented-out check are already in place.
+*Note:* PlatformIO's `RAM:` figure is `.data + .bss` — **static only, no runtime heap**. It cannot verify the `AGENTS.md` budget by itself; what it catches is slow erosion of internal DRAM. Runtime peak stays the job of on-device logging and the T-11.2 soak.
+*Accept:* all three jobs green on `main`; deliberately adding `#include <Arduino.h>` to a `lib/render/` file turns **purity** red.
+
+**T-1.11 — Commit.** `Phase 1: skeleton, partitions, task topology, render-purity guard, agent tooling, Wokwi CI, licence audit, CI workflow`
 
 ---
 
