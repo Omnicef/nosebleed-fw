@@ -1,0 +1,30 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Agent / editor tooling
+compile_commands.json
+.vscode/
+.idea/
+.cache/
+
+# Secrets — never commit
+secrets.h
+secrets.ini
+*.local.json
+
+# Test and build output
+test/out/
+build/
+*.bin
+*.elf
+*.map
+
+# Generated assets (rebuild with tools/)
+assets/generated/
+logos.bin
+
+# OS
+.DS_Store
+Thumbs.db

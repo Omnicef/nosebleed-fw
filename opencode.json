@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": true,
+  "instructions": [
+    "docs/arduinojson-v7.md",
+    "PLAN.md"
+  ]
+}

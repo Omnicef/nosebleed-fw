@@ -1,0 +1,8 @@
+# Wokwi simulation config. See PLAN.md §4 for scope limits.
+# The panel cannot be simulated (no HUB75 part, I2S unimplemented on S3) and
+# timing is not representative (CPU capped ~8 MHz). Logic only.
+
+[wokwi]
+version = 1
+firmware = '.pio/build/esp32s3/firmware.bin'
+elf = '.pio/build/esp32s3/firmware.elf'
