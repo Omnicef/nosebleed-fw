@@ -105,6 +105,38 @@ and GDB all work. CLI and GitHub Action available for headless CI.
    but is still not real-time. **Never** use Wokwi to evaluate T-0.5's 6-second budget or the 30 fps render target.
    Heap figures are reasonably faithful; wall-clock figures are not.
 
+### Working without hardware
+
+The board and adapter are not required to make real progress. Most of this project is laptop work.
+
+| Task | Without hardware | Note |
+|---|---|---|
+| T-0.1 toolchain, PSRAM/flash detect | ✅ Wokwi | `diagram.json` already configures the exact N16R8 |
+| T-0.2 panel hello world | ❌ **blocked** | No HUB75 in Wokwi. Hardware only. |
+| T-0.3 WiFi + SNTP | ✅ Wokwi | Both simulated |
+| T-0.4 TLS smoke test | ✅ Wokwi | Real TLS — AES/SHA accelerators emulated |
+| **T-0.5 the gate** | ⚠️ **half** | **Heap: yes. Timing: no.** See below. |
+| Phase 1 | ✅ all | Skeleton, partitions, tasks, CI, licence audit |
+| Phase 2 except T-2.8, T-2.9 | ✅ | Canvas, primitives, fonts, host harness, T-2.7 parity proof |
+| Phase 3 | ✅ | `build_logos.py` and the atlas are pure host Python |
+| Phases 5–7 | ✅ mostly | Data layer, all 10 widgets, scroll engine — host tests and fixtures |
+
+**Splitting the gate.** Wokwi emulates real memory, so **peak heap during the filtered MLB fetch is meaningful
+today**. Wall-clock is not — the simulated CPU is capped near 8 MHz (§4). Run the memory half now: if the filtered
+parse blows past ~50 KB that is an architecture problem, and it is the half you cannot fix by waiting. The timing
+half has four known mitigations in §2 and is re-run on hardware.
+
+**Record a split verdict in `SPIKE_RESULTS.md`** — heap measured in Wokwi, timing pending — and treat the gate as
+open until hardware closes it. Do not let a green heap number read as a full pass.
+
+**Deferred set, to run the day the board arrives:** T-0.2, T-0.5 timing, T-2.8, T-2.9, and the on-device halves of
+Phases 8–11.
+
+**Caveat.** Wokwi's WiFi routes through their gateway. If a 1.46 MB fetch stalls or errors, suspect the simulator
+before your design and re-test on hardware rather than redesigning around it.
+
+---
+
 ### QEMU
 
 Espressif's QEMU fork supports the ESP32-S3 via `idf.py qemu`, with a virtual framebuffer and eFuse emulation — useful

@@ -57,6 +57,8 @@ If the header is not present, **stop and say so** rather than guessing. Do not i
 - **One TLS session at a time.** Stagger league polls. Concurrent sessions blow the internal-RAM budget.
 - **Degrade gracefully.** Missing ESPN fields (especially `situation`) hide that element rather than erroring. Network down = last-good data plus a small offline indicator, never a blank panel. Missing logo = team abbreviation in team colour.
 - **Config only in NVS.** Scores, caches and runtime status stay in RAM, never persisted. (Same rule as the Pi original — flash wear replaces SD-card corruption as the reason.)
+- **The Marquee Python repo (`/home/anthony/VSCode/Marquee`) is READ-ONLY.** It is the design reference — `PLAN.md`, `CARD_DESIGN_SPEC.md`, `docs/API_NOTES.md`, the BDF fonts and the ESPN fixtures. Never write to it, not even a small fix or a backport. Changes there are a separate decision in a separate session.
+- **Never read an ESPN fixture whole.** `tests/fixtures/mlb_scoreboard.json` is **1.4 MB — roughly 400k tokens**. One `cat` ends the session. Sample the specific fields you need with `jq` or a Python one-liner. The fixtures are a test corpus for compiled code, not reading material. Same rule at T-5.8.
 - **Be a good API citizen.** Cache aggressively, jittered exponential backoff on errors, live games 15–30 s, everything else far slower. No API key for ESPN — don't add one.
 
 ## Memory budget (keep this honest)
