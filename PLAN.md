@@ -475,7 +475,7 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 **T-9.2 — Credential storage and reconnect.** NVS-backed, with exponential backoff and a fallback to AP mode after sustained failure.
 *Accept:* survives router reboot; recovers unattended.
 
-**T-9.3 — Convert to Arduino-as-IDF-component.** Required for `esp_ota` and full `menuconfig` access. `lib/render/` should need **zero changes** — if it does, T-1.6 was not doing its job.
+**T-9.3 — Convert to Arduino-as-IDF-component.** Required for `esp_ota`, full `menuconfig` access, **and the mbedTLS tuning that T-0.6 proved impossible on the Arduino core** — a confirmed ~14 KB recovery (53 KB → ~39 KB) that is unreachable until this conversion happens. `lib/render/` should need **zero changes** — if it does, T-1.6 was not doing its job.
 *Accept:* builds and runs identically; re-verify the T-0.6 mbedTLS settings now actually take effect.
 
 **T-9.4 — Firmware OTA.** `esp_ota` against the two app slots, with rollback on boot failure.

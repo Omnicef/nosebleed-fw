@@ -79,14 +79,16 @@ the 50–80 KB expectation. SNTP is ~504 B in steady state — effectively free 
 | Consumer | Budget |
 |---|---|
 | HUB75 DMA framebuffer, 64×32, 8-bit depth, double-buffered | 32 KB |
-| mbedTLS session, peak, one connection | 26–36 KB tuned |
+| mbedTLS session, peak, one connection | **53 KB** (measured; see below) |
 | HTTP stream buffer | 4–8 KB |
 | Task stacks (4) | ~32 KB |
 | Web server + connections | 20–40 KB |
-| **Total** | **114–148 KB** |
-| **Headroom** | **~114–148 KB** |
+| **Total** | **141–165 KB** |
+| **Headroom** | **~97–121 KB** |
 
 DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **16 KB per buffer**.
+
+> **TLS is 53 KB and cannot be tuned on this stack.** T-0.6 proved the mbedTLS options (`ASYMMETRIC_CONTENT_LEN`, `SSL_OUT_CONTENT_LEN`, drop-keep-peer-cert) are **inert under Arduino-ESP32**: the core links a *prebuilt* `libmbedtls` compiled untuned, pioarduino offers no from-source path, and its prebuild hook overwrites `sdkconfig`. The ~14 KB recovery is real but only lands after the **T-9.3 IDF conversion**. Budget 53 KB until then. It still fits comfortably — do not treat this as a reason to convert early.
 
 > **Superseded projection.** This file previously claimed "~320 KB usable after WiFi" *and* listed WiFi as a 50–80 KB
 > consumer — internally inconsistent, since a post-WiFi figure already has WiFi deducted. Measurement settled it:
