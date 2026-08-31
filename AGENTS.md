@@ -61,23 +61,40 @@ If the header is not present, **stop and say so** rather than guessing. Do not i
 - **Never read an ESPN fixture whole.** `tests/fixtures/mlb_scoreboard.json` is **1.4 MB — roughly 400k tokens**. One `cat` ends the session. Sample the specific fields you need with `jq` or a Python one-liner. The fixtures are a test corpus for compiled code, not reading material. Same rule at T-5.8.
 - **Be a good API citizen.** Cache aggressively, jittered exponential backoff on errors, live games 15–30 s, everything else far slower. No API key for ESPN — don't add one.
 
-## Memory budget (keep this honest)
+## Memory budget (measured, not projected)
 
-**Internal SRAM (~320 KB usable after WiFi):**
+**Internal SRAM — measured in Wokwi at T-0.1/T-0.3. Re-verify on hardware.**
+
+| Point | Free internal heap |
+|---|---|
+| No WiFi stack linked (T-0.1) | 346,072 B |
+| WiFi + SNTP linked, not connected | 318,032 B |
+| **WiFi connected + SNTP synced — the working ceiling** | **268,652 B (~262 KB)** |
+
+Linking the WiFi/SNTP stack costs ~27 KB of static baseline; connecting costs a further ~48 KB, at the low edge of
+the 50–80 KB expectation. SNTP is ~504 B in steady state — effectively free once the clock lands.
+
+**Everything below is spent from that ~262 KB ceiling. WiFi is already deducted — do not count it again.**
 
 | Consumer | Budget |
 |---|---|
 | HUB75 DMA framebuffer, 64×32, 8-bit depth, double-buffered | 32 KB |
-| WiFi + lwIP | 50–80 KB |
 | mbedTLS session, peak, one connection | 26–36 KB tuned |
 | HTTP stream buffer | 4–8 KB |
 | Task stacks (4) | ~32 KB |
 | Web server + connections | 20–40 KB |
-| **Total** | **~180–240 KB** |
+| **Total** | **114–148 KB** |
+| **Headroom** | **~114–148 KB** |
 
 DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **16 KB per buffer**.
 
+> **Superseded projection.** This file previously claimed "~320 KB usable after WiFi" *and* listed WiFi as a 50–80 KB
+> consumer — internally inconsistent, since a post-WiFi figure already has WiFi deducted. Measurement settled it:
+> the ceiling is ~262 KB and WiFi is not a line item against it. If you see a headroom figure in the 20–80 KB range,
+> WiFi has been counted twice.
+
 **PSRAM (8 MB) — effectively unconstrained.** Card strip ×2 ≈ 320 KB, JSON document 8–32 KB. Under 400 KB of 8 MB.
+Measured free at boot: 8,384,788 B.
 
 **Flash (16 MB):** logo atlas is the only large consumer — ~306 KB for 144 pro teams, ~2.1 MB including all college.
 
