@@ -166,9 +166,16 @@ Nothing here is production code. The goal is one number: peak heap during a filt
 **T-0.4 — TLS smoke test.** `esp_http_client` + `esp_crt_bundle`, GET the NFL scoreboard (small).
 *Accept:* HTTP 200, byte count matches `Content-Length`, no cert error. Log free heap before/after.
 
-**T-0.5 — THE GATE: filtered MLB fetch.** GET the MLB scoreboard with an ArduinoJson `Filter` document. Parse straight off the stream, wrapped in `ReadBufferingStream` (StreamUtils, 512 B chunks) — unbuffered byte-at-a-time reads will make this gate fail for the wrong reason. Extract into a temporary `Game[]`. Log `esp_get_minimum_free_heap_size()` and elapsed ms.
+**T-0.5 — THE GATE: filtered MLB fetch.** GET the MLB scoreboard with an ArduinoJson `Filter` document. Parse straight off the stream, wrapped in `ReadBufferingStream` (StreamUtils, 512 B chunks) — unbuffered byte-at-a-time reads will make this gate fail for the wrong reason. Extract into a temporary `Game[]`.
+
+> ⚠️ **Measure internal heap only.** `esp_get_minimum_free_heap_size()` is **wrong for this measurement** — it tracks the combined internal + PSRAM heap, so 8 MB of PSRAM masks the internal dip entirely (it returned ~8.5 M at T-0.4). Use the `MALLOC_CAP_INTERNAL`-scoped heap-caps API, or sample `heap_caps_get_free_size(MALLOC_CAP_INTERNAL)` at phase boundaries — pre-fetch, post-handshake, mid-parse, post-cleanup. Verify the exact signature against the installed header before use.
+
+Log the internal-heap phase samples and elapsed ms.
 *Accept:* **peak heap consumption under ~50 KB and elapsed under ~6 s.** Games parse correctly — spot-check scores and team abbreviations against the fixture.
 *If this fails, stop and reassess. Do not proceed to Phase 1.*
+
+> **ESPN blocks the Wokwi Public Gateway.** Measured at T-0.4: HTTPS handshake and `esp_crt_bundle` validation both succeed against ESPN's real certificate, but the CDN returns **403 with a 442-byte body** regardless of User-Agent. So T-0.5 cannot draw a real payload through Wokwi.
+> **Workaround for the memory half:** publish `mlb_scoreboard.json` (1.4 MB, from the Marquee fixtures) to a public gist or public repo and fetch it from `raw.githubusercontent.com` — valid cert in the Mozilla bundle, real TLS, real 1.4 MB stream, real filtered parse. That measures peak internal heap under exactly the load that matters. It does **not** measure ESPN's own headers, chunking or throughput; those stay deferred to hardware along with timing.
 
 **T-0.6 — mbedTLS tuning.** Apply `CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y` with `CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048`, and disable *"keep peer certificate after handshake"*. Re-run T-0.5.
 *Accept:* ~14 KB recovered. **Note:** `MBEDTLS_SSL_MAX_CONTENT_LEN` is widely reported not to take effect on the Arduino core — if these settings don't bite, that is the known issue and a reason to bring the Phase 9 IDF conversion forward.
