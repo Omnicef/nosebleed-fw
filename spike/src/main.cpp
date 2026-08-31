@@ -1,38 +1,91 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Phase 0 / T-0.4 -- TLS smoke test (Wokwi). Throwaway code in spike/.
+// Phase 0 / T-0.5 -- THE GATE: filtered MLB fetch (memory half). Throwaway in spike/.
 //
-// Boot order is a HARD rule: WiFi -> SNTP -> TLS. The clock must land before
-// the first handshake, or cert notBefore validation fails against a zero clock.
+// Fetches the mlb_scoreboard.json (1.46 MB, 15 events) from a PUBLIC GIST
+// (raw.githubusercontent.com -- valid cert in the Mozilla crt bundle, so this is
+// real TLS + real esp_crt_bundle validation + a real 1.4 MB stream), NOT ESPN,
+// which 403s the Wokwi Public Gateway egress IP (see PLAN.md T-0.5).
 //
-// GETs the ESPN NFL scoreboard (small) over HTTPS with esp_http_client +
-// esp_crt_bundle -- the Mozilla CA bundle baked in by menuconfig, NEVER a
-// pinned cert (ESPN rotates, pinning schedules an outage).
-//   Accept: HTTP 200, bytes read == Content-Length, no cert error.
-// Logs free heap before / peak(during) / after to size the UNTUNED mbedTLS
-// session; T-0.6 applies the tuning and re-measures the same numbers.
+// Parses straight off the stream with an ArduinoJson v7 Filter, wrapped in
+// ReadBufferingStream (512 B) -- never byte-at-a-time, never the whole response
+// buffered. The parse doc lives in PSRAM (docs/arduinojson-v7.md §3/§5) so the
+// internal-heap peak isolates the TLS session + HTTP + filter + read buffer.
+//
+// Boot order HARD rule: WiFi -> SNTP -> TLS.
+//
+// THE NUMBER: peak INTERNAL heap. esp_get_minimum_free_heap_size() is banned for
+// this -- it tracks internal+PSRAM combined and 8 MB of PSRAM masks the internal
+// dip. Sample heap_caps_get_free_size(MALLOC_CAP_INTERNAL) at the four phase
+// boundaries instead. Elapsed time is IGNORED (Wokwi CPU is capped ~8 MHz; the
+// timing half of the gate is deferred to hardware).
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <time.h>
-#include "esp_http_client.h"
-#include "esp_crt_bundle.h"
-#include "esp_system.h"
+#include "esp_heap_caps.h"
+#include <ArduinoJson.h>
+#include <StreamUtils.h>
 
 // Wokwi's single virtual AP: open network, empty password, channel 6 skips the
-// scan. A hardware build overrides these three via its own defines (secrets.h
-// or build_flags); do not hardcode a real SSID here.
+// scan. A hardware build overrides these via its own defines; no real SSID here.
 #define WIFI_SSID    "Wokwi-GUEST"
 #define WIFI_PASS    ""
 #define WIFI_CHANNEL 6
 
-// Exact scoreboard URL the Python builds: {base}/{football/nfl}/scoreboard.
-#define NFL_URL "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+// TODO(replace): public gist raw URL for mlb_scoreboard.json (PLAN.md T-0.5).
+#define GIST_URL "https://raw.githubusercontent.com/PLACEHOLDER/mlb_scoreboard.json"
+
+// docs/arduinojson-v7.md §5 -- PSRAM allocator. v7 requires all three override
+// methods, including reallocate(). Keeps the parse doc out of internal heap.
+struct SpiRamAllocator : ArduinoJson::Allocator {
+  void* allocate(size_t size) override {
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  }
+  void deallocate(void* p) override {
+    heap_caps_free(p);
+  }
+  void* reallocate(void* p, size_t n) override {
+    return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM);
+  }
+};
+
+static uint32_t int_free() {
+  return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
+// The filter, verbatim from docs/arduinojson-v7.md §3. `true` = keep the field;
+// a lone [0] element in an array filters EVERY element of that array.
+static void build_filter(JsonDocument& f) {
+  JsonObject ev = f["events"][0].to<JsonObject>();
+  ev["id"] = true;
+  ev["date"] = true;
+
+  JsonObject comp = ev["competitions"][0].to<JsonObject>();
+  JsonObject st = comp["status"].to<JsonObject>();
+  st["period"] = true;
+  st["displayClock"] = true;
+  st["type"]["state"] = true;
+  st["type"]["shortDetail"] = true;
+
+  JsonObject c = comp["competitors"][0].to<JsonObject>();
+  c["homeAway"] = true;
+  c["score"] = true;
+  JsonObject tm = c["team"].to<JsonObject>();
+  tm["id"] = true;
+  tm["displayName"] = true;
+  tm["abbreviation"] = true;
+  tm["color"] = true;
+
+  comp["situation"] = true;  // small -- keep the whole subtree
+}
 
 void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println();
-  Serial.println("=== nosebleed T-0.4 TLS smoke test (Wokwi) ===");
+  Serial.println("=== nosebleed T-0.5 GATE (memory half): filtered MLB fetch ===");
 
   WiFi.begin(WIFI_SSID, WIFI_PASS, WIFI_CHANNEL);
   uint8_t st = WiFi.waitForConnectResult(20000);
@@ -47,7 +100,7 @@ void setup() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   time_t now = 0;
   uint32_t waited = 0;
-  while (now < 1700000000 && waited < 20000) {  // < 2023-11 => not synced yet
+  while (now < 1700000000 && waited < 20000) {
     delay(100);
     waited += 100;
     now = time(nullptr);
@@ -56,86 +109,84 @@ void setup() {
     Serial.println("SNTP FAILED: no time within 20 s. Re-run -- suspect Wokwi gateway.");
     for (;;) delay(1000);
   }
-  struct tm t;
-  localtime_r(&now, &t);
-  char tbuf[24];
-  strftime(tbuf, sizeof tbuf, "%Y-%m-%d %H:%M:%S", &t);
-  Serial.printf("SNTP synced     : %s UTC (waited %lu ms)\n", tbuf, (unsigned long)waited);
+  Serial.printf("SNTP synced     : ok (waited %lu ms)\n", (unsigned long)waited);
 
-  // ---- T-0.4: one HTTPS GET, full cert validation, no pinned cert ----
-  const uint32_t heap_pre = (uint32_t)ESP.getFreeHeap();
-  Serial.printf("heap[pre-tls]    : %u bytes\n", heap_pre);
+  // ---- T-0.5: filtered streaming parse of the 1.46 MB MLB scoreboard ----
+  const uint32_t heap_prefetch = int_free();
+  Serial.printf("heap[prefetch]   : %u bytes internal free\n", heap_prefetch);
 
-  const esp_http_client_config_t http_cfg = {
-      .url = NFL_URL,
-      .user_agent = "marquee-display/2.0",   // Python's UA. (Browser UA also 403s --
-                                              // the block is the Wokwi gateway IP, not the UA.)
-      .method = HTTP_METHOD_GET,
-      .timeout_ms = 20000,
-      .buffer_size = 512,
-      .crt_bundle_attach = esp_crt_bundle_attach,
-  };
+  JsonDocument filter;          // small, internal
+  build_filter(filter);
 
-  esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
-  if (!client) {
-    Serial.println("http init FAILED");
+  SpiRamAllocator psram_alloc;
+  JsonDocument doc(&psram_alloc);  // parse doc in PSRAM -- internal heap stays clean
+
+  WiFiClientSecure secure;       // uses esp_crt_bundle by default -- no pin, no insecure
+  HTTPClient http;
+  http.setConnectTimeout(15000);
+  http.setTimeout(15000);
+  if (!http.begin(secure, GIST_URL)) {
+    Serial.println("http.begin FAILED");
     for (;;) delay(1000);
   }
-  const uint32_t h_init = (uint32_t)ESP.getFreeHeap();
-  Serial.printf("heap[post-init]  : %u bytes\n", h_init);
 
-  esp_err_t err = esp_http_client_open(client, 0);
-  if (err != ESP_OK) {
-    Serial.printf("TLS open FAILED  : %s (0x%x). Re-run -- suspect Wokwi gateway.\n",
-                  esp_err_to_name(err), (unsigned)err);
-    esp_http_client_cleanup(client);
+  const int code = http.GET();
+  Serial.printf("HTTP status     : %d\n", code);
+  const int64_t clen = http.getSize();
+  Serial.printf("Content-Length  : %lld\n", (long long)clen);
+  const uint32_t heap_posthandshake = int_free();
+  Serial.printf("heap[post-handshake]: %u bytes internal free\n", heap_posthandshake);
+
+  if (code != HTTP_CODE_OK) {
+    Serial.println("GATE: could not fetch 200. Re-run -- suspect Wokwi gateway.");
+    http.end();
     for (;;) delay(1000);
   }
-  const uint32_t h_open = (uint32_t)ESP.getFreeHeap();
-  Serial.printf("heap[post-open]  : %u bytes  (handshake done)\n", h_open);
 
-  err = esp_http_client_fetch_headers(client);
-  if (err != ESP_OK) {
-    Serial.printf("fetch_headers FAILED: %s (0x%x)\n", esp_err_to_name(err), (unsigned)err);
+  StreamUtils::ReadBufferingStream buffered(*http.getStreamPtr(), 512);
+  DeserializationError err = deserializeJson(doc, buffered, DeserializationOption::Filter(filter));
+  const uint32_t heap_postparse = int_free();
+  Serial.printf("heap[post-parse]  : %u bytes internal free\n", heap_postparse);
+
+  if (err) {
+    Serial.printf("parse ERROR      : %s\n", err.c_str());
+  } else {
+    JsonArray events = doc["events"].as<JsonArray>();
+    Serial.printf("events parsed    : %u\n", (unsigned)events.size());
+    // Spot-check: first three events, team abbr + score + state.
+    uint32_t shown = 0;
+    for (JsonObject ev : events) {
+      if (shown++ >= 3) break;
+      JsonObject comp = ev["competitions"][0];
+      const char* state = comp["status"]["type"]["state"] | "?";
+      for (JsonObject c : comp["competitors"].as<JsonArray>()) {
+        const char* ha = c["homeAway"] | "?";
+        const char* abbr = c["team"]["abbreviation"] | "?";
+        int score = c["score"] | -1;
+        Serial.printf("    %-3s %-6s score=%d  state=%s\n", ha, abbr, score, state);
+      }
+    }
   }
-  const int status = esp_http_client_get_status_code(client);
-  const int64_t clen = esp_http_client_get_content_length(client);
-  Serial.printf("HTTP status      : %d\n", status);
-  Serial.printf("Content-Length   : %lld\n", (long long)clen);
 
-  int64_t got = 0;
-  uint32_t h_min_read = (uint32_t)ESP.getFreeHeap();
-  char rbuf[512];
-  for (;;) {
-    int r = esp_http_client_read_response(client, rbuf, sizeof rbuf);
-    if (r < 0) { Serial.printf("read FAILED      : %d\n", r); break; }
-    if (r == 0) break;
-    got += r;
-    if (clen >= 0 && got >= clen) break;
-    const uint32_t h = (uint32_t)ESP.getFreeHeap();
-    if (h < h_min_read) h_min_read = h;
-  }
-  Serial.printf("bytes read       : %lld / %lld\n", (long long)got, (long long)clen);
-  Serial.printf("heap[min-reads]  : %u bytes  (lowest during body read)\n", h_min_read);
+  http.end();
+  doc.clear();
+  const uint32_t heap_postcleanup = int_free();
+  Serial.printf("heap[post-cleanup]: %u bytes internal free\n", heap_postcleanup);
 
-  esp_http_client_close(client);
-  esp_http_client_cleanup(client);
-  const uint32_t heap_post = (uint32_t)ESP.getFreeHeap();
-  Serial.printf("heap[post-cleanup]: %u bytes\n", heap_post);
+  // Peak internal heap = prefetched free minus the lowest free at any sample.
+  uint32_t min_free = heap_prefetch;
+  if (heap_posthandshake < min_free) min_free = heap_posthandshake;
+  if (heap_postparse < min_free) min_free = heap_postparse;
+  if (heap_postcleanup < min_free) min_free = heap_postcleanup;
+  const uint32_t peak = heap_prefetch - min_free;
 
-  // No watermark-reset in this IDF, so peak-during is the min of the sampled
-  // during-phases; min-since-boot is the authoritative global low (catches the
-  // handshake dip even if it falls between samples).
-  const uint32_t during = h_init < h_open ? h_init : h_open;
-  const uint32_t peak = h_min_read < during ? h_min_read : during;
-  const uint32_t gmin = esp_get_minimum_free_heap_size();
-  Serial.printf("min-since-boot   : %u bytes\n", (unsigned)gmin);
-  Serial.printf("peak mbedTLS drop: %u bytes (pre-tls %u -> lowest during %u)\n",
-                (unsigned)(heap_pre - peak), heap_pre, peak);
-
-  const bool ok = (status == 200) && (clen >= 0) && (got == clen);
-  Serial.printf("T-0.4 %s: status=%d, bytes=%lld/%lld, no cert error (crt_bundle)\n",
-                ok ? "PASS" : "FAIL", status, (long long)got, (long long)clen);
+  Serial.println();
+  Serial.println("=== T-0.5 RESULT ===");
+  Serial.printf("prefetch free    : %u\n", heap_prefetch);
+  Serial.printf("min free (any)   : %u\n", min_free);
+  Serial.printf("PEAK internal    : %u bytes (%.1f KB)\n", peak, (double)peak / 1024.0);
+  Serial.printf("GATE (<~50 KB)   : %s\n",
+                peak < 51200 ? "PASS" : "OVER -- untuned; T-0.6 mbedTLS tuning expected to recover ~14 KB");
 }
 
 void loop() {

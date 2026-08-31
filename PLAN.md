@@ -171,7 +171,18 @@ Nothing here is production code. The goal is one number: peak heap during a filt
 > ⚠️ **Measure internal heap only.** `esp_get_minimum_free_heap_size()` is **wrong for this measurement** — it tracks the combined internal + PSRAM heap, so 8 MB of PSRAM masks the internal dip entirely (it returned ~8.5 M at T-0.4). Use the `MALLOC_CAP_INTERNAL`-scoped heap-caps API, or sample `heap_caps_get_free_size(MALLOC_CAP_INTERNAL)` at phase boundaries — pre-fetch, post-handshake, mid-parse, post-cleanup. Verify the exact signature against the installed header before use.
 
 Log the internal-heap phase samples and elapsed ms.
-*Accept:* **peak heap consumption under ~50 KB and elapsed under ~6 s.** Games parse correctly — spot-check scores and team abbreviations against the fixture.
+*Accept:* **report the measurement decomposed — a single total is not a verdict.**
+
+| Phase delta | What it measures | Expectation |
+|---|---|---|
+| pre-fetch → post-handshake | mbedTLS session | ~53 KB untuned, 26–36 KB after T-0.6. **Not what this gate is about.** |
+| post-handshake → parse low-water | **the filtered parse itself — THE GATE** | small: stream buffer + ArduinoJson scratch, not tens of KB |
+| PSRAM delta across the parse | retained `JsonDocument` | ~4.5 KB from a 1.46 MB input; ≤ 8 KB per T-5.4 |
+| post-cleanup vs pre-fetch | leak check | < ~1 KB residual |
+
+The `JsonDocument` lives in PSRAM via `SpiRamAllocator`, so a correct filtered parse costs almost nothing in **internal** heap. If the internal delta across the parse phase is large, the filter is not doing its job — that is the failure this gate exists to catch. A 53 KB total that is 53 KB of TLS and ~0 of parse is a **pass**, not a near-miss; TLS is a separate budget line with a known fix at T-0.6.
+Games parse correctly — spot-check scores and team abbreviations against the fixture.
+*Timing:* elapsed under ~6 s, **on hardware only**. Meaningless under Wokwi's CPU cap.
 *If this fails, stop and reassess. Do not proceed to Phase 1.*
 
 > **ESPN blocks the Wokwi Public Gateway.** Measured at T-0.4: HTTPS handshake and `esp_crt_bundle` validation both succeed against ESPN's real certificate, but the CDN returns **403 with a 442-byte body** regardless of User-Agent. So T-0.5 cannot draw a real payload through Wokwi.
