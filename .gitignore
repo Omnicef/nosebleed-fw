@@ -13,6 +13,10 @@ compile_commands.json
 secrets.h
 secrets.ini
 *.local.json
+.env
+.env.*
+!.env.example
+*.token
 
 # Test and build output
 test/out/
