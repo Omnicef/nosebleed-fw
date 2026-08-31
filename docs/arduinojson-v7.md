@@ -160,11 +160,18 @@ A fresh document is neither object nor array — `isNull()` is true. It takes it
 
 `deserializeJson()` returns a `DeserializationError`, which is truthy on failure. Always check it — per our hard rules, a malformed or truncated response must degrade to last-good data, never crash or blank the panel.
 
-Nesting is capped by `ARDUINOJSON_DEFAULT_NESTING_LIMIT` as a stack-overflow guard. ESPN payloads nest deeply; if you hit the limit, raise it explicitly:
+Nesting is capped by `ARDUINOJSON_DEFAULT_NESTING_LIMIT` (default **10**) as a stack-overflow guard.
+
+**⚠ Measured at T-0.5: the ESPN MLB scoreboard nests to depth 15.** At the default limit the parse fails with
+`TooDeep` — every time, not intermittently. This is not optional:
 
 ```cpp
-deserializeJson(doc, input, DeserializationOption::NestingLimit(15));
+deserializeJson(doc, input, DeserializationOption::Filter(filter),
+                DeserializationOption::NestingLimit(20));
 ```
+
+20 gives headroom over the measured 15. Any new endpoint (weather, ticker, standings) must be checked for depth
+before its client ships.
 
 ---
 

@@ -185,6 +185,10 @@ Games parse correctly — spot-check scores and team abbreviations against the f
 *Timing:* elapsed under ~6 s, **on hardware only**. Meaningless under Wokwi's CPU cap.
 *If this fails, stop and reassess. Do not proceed to Phase 1.*
 
+> **Result (Wokwi, conditional pass).** Filtered parse cost **1.6 KB internal**; retained document **5,676 B raw / 10.5 KB in PSRAM** from a 1.46 MB input; leak 0.5 KB; spot-check 6/6 against the fixture. Filter efficacy is **proven**.
+> **What this run did NOT test.** ESPN blocks the Wokwi gateway and a raw 1.46 MB flash embed exceeds Wokwi's image limit, so the payload was zlib-embedded and inflated into PSRAM, then parsed **from memory rather than off a TLS stream**. Three things therefore remain unmeasured: `ReadBufferingStream` was never exercised; the **peak simultaneous** internal usage of an mbedTLS session and an active parse is unknown (they were measured separately, at T-0.4 and here); and there was no network backpressure. Close all three on hardware before treating Phase 0 as done.
+> **Finding — `NestingLimit(20)` is mandatory.** The MLB payload nests to depth 15; ArduinoJson's default is 10, so the parse dies with `TooDeep` without it. Carried into T-5.4 and `docs/arduinojson-v7.md` §7.
+
 > **ESPN blocks the Wokwi Public Gateway.** Measured at T-0.4: HTTPS handshake and `esp_crt_bundle` validation both succeed against ESPN's real certificate, but the CDN returns **403 with a 442-byte body** regardless of User-Agent. So T-0.5 cannot draw a real payload through Wokwi.
 > **Workaround for the memory half:** publish `mlb_scoreboard.json` (1.4 MB, from the Marquee fixtures) to a public gist or public repo and fetch it from `raw.githubusercontent.com` — valid cert in the Mozilla bundle, real TLS, real 1.4 MB stream, real filtered parse. That measures peak internal heap under exactly the load that matters. It does **not** measure ESPN's own headers, chunking or throughput; those stay deferred to hardware along with timing.
 
@@ -353,7 +357,8 @@ This phase builds the foundation everything visual sits on, **and the test harne
 *Accept:* recovers from a forced DNS failure; never leaks a session.
 
 **T-5.4 — Filter documents.** One ArduinoJson filter per response shape, retaining exactly the fields `norm_game()` reads: `events[].id`, `.date`, `competitions[0].status.{period,displayClock,type.state,type.shortDetail}`, `competitors[].{homeAway,score,team.{id,displayName,abbreviation,color}}`, and `competitions[0].situation` whole.
-*Accept:* filtered parse of `mlb_scoreboard.json` retains **≤ 8 KB**.
+Every call must pass `DeserializationOption::NestingLimit(20)` alongside the filter — the MLB payload nests to depth 15 and the default of 10 fails with `TooDeep` (measured, T-0.5). Check depth for any new endpoint before shipping its client.
+*Accept:* filtered parse of `mlb_scoreboard.json` retains **≤ 8 KB raw** (measured 5,676 B; ~10.5 KB in PSRAM after ArduinoJson's ~1.9× slot overhead, which is fine).
 
 **T-5.5 — Normalisation.** Port `norm_game`, `norm_team_from_competitor`, `norm_team_from_teams_endpoint`, `_norm_situation`, `_safe_int`, `_parse_date`. Missing fields degrade, never throw.
 *Accept:* host tests over all six fixtures produce games matching the Python's output field-for-field.
