@@ -63,6 +63,20 @@ Raw internal free across the run: pre-fetch 261,076 → pre-parse 200,888 → **
 
 **Go/no-go: GO.** All three Wokwi caveats are now closed on hardware: the streaming path works (`ReadBufferingStream` over real TLS), the peak-simultaneous figure is measured (73.6 KB), and timing is real (6.1 s unmitigated, at budget). The architecture is viable. Proceed to Phase 1.
 
+### T-0.2 — Panel hello-world — **PASS (signal path) / DEFERRED (bright-white acceptance)**
+
+Hardware: **SEENGREAT RGB Matrix Adapter Board (E)**, SKU 250911, ESP32-S3-DevKitC-1, silkscreened revision **V2.x**. Driver `mrcodetastic/ESP32-HUB75-MatrixPanel-DMA` v3.0.15, `NO_GFX`.
+
+- `begin()` OK. **`calculated_refresh_rate = 110 Hz`** — this is the lib's auto-derived value from `i2sspeed`/depth/`min_refresh_rate`; v3.0.15 made `lsbMsbTransitionBit` internal, so this reported figure is the refresh measurement. Matches the ≈110 Hz AGENTS predicts for the fast end.
+- DMA framebuffer **~30 KB internal SRAM** (free heap 344,376 → 313,520), single-buffered. Inside the ~32 KB budget.
+- **Signal path confirmed**: the full cycle (R/G/B/white fills → gradient → sweeping stripe) renders coherently across the whole 64×32. Wiring and level-shift are correct.
+
+**Deferred — bright-white acceptance.** Bench has no 5 V/4 A supply, so the panel is on the devkit's USB and firmware is pinned to `setBrightness(16)` to stay under the PC port's 500 mA. The no-brown-out / no-ghosting / full-brightness check is **open until the real PSU is connected**.
+
+**Findings:**
+- **The adapter's USB-C is "power input only"** (wiki silkscreen ①). 5 V from the devkit does **not** power the adapter's 74HCT245 or the panel. Correct rig: 5 V/4 A into the adapter's own USB-C/DC-044, panel power on one of its two VH-4P outputs, adapter power LED ② lit.
+- **The library's S3 default pin map is wrong for this board** — using it gave no display / flickering lines. The real per-revision map is SEENGREAT wiki 186. **V2.x**: R1=18 G1=8 B1=17 R2=16 G2=1 B2=15 A=7 B=48 C=6 D=47 E=2 LAT=21 OE=4 CLK=5. (V1.x is different; `spike/src/panel_main.cpp` switches between them with `BOARD_V1`/`BOARD_V2`.)
+
 ### Hardware-only findings
 
 - **`ARDUINO_USB_CDC_ON_BOOT` must be set or `Serial` is invisible.** The Arduino core defaults it to 0, routing `Serial` to UART0 (pins 43/44, unwired on a bench). Symptom: firmware "hangs" with zero output while IDF-console errors still print. Fix: `build_flags = -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1`. This cost most of a session to find.
