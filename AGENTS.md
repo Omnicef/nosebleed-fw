@@ -145,9 +145,14 @@ nosebleed-fw/
 │   └── web/                  # server + api handlers
 ├── src/main.cpp              # app_main, task creation
 └── test/
-    ├── native/               # host render + parser tests
-    └── embedded/             # on-device smoke tests
+    ├── test_native/          # host render + parser tests
+    └── test_embedded/        # on-device smoke tests
 ```
+
+> Suite directories **must** be named `test_*` — PlatformIO's test discovery
+> silently ignores any `test/` subdir without the prefix (it reports "Nothing to
+> build", not an error naming the folder). `pio test -e native` selects the
+> `test_native` suite via `test_filter`.
 
 ## Build phases (PLAN.md — do in order)
 

@@ -1,11 +1,8 @@
 # Wokwi simulation config. See PLAN.md §4 for scope limits.
 # The panel cannot be simulated (no HUB75 part, I2S unimplemented on S3) and
 # timing is not representative (CPU capped ~8 MHz). Logic only.
-#
-# Phase 0 spike: the build lives in spike/. T-1.1 (Phase 1) moves it to the
-# repo root and these paths revert to .pio/build/esp32s3/.
 
 [wokwi]
 version = 1
-firmware = 'spike/.pio/build/esp32s3/firmware.bin'
-elf = 'spike/.pio/build/esp32s3/firmware.elf'
+firmware = '.pio/build/esp32s3/firmware.bin'
+elf = '.pio/build/esp32s3/firmware.elf'

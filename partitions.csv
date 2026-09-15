@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Partition layout (T-1.2). 16 MB flash. Total used: 11 MB (0x10000 + 4 + 4 + 2 + 1 MB).
+#
+# Note: PLAN T-1.2 lists `nvs 0x6000` + `otadata 0xf000 size 0x2000`, which
+# overlaps `app0` at 0x10000 (0xf000 + 0x2000 = 0x11000). Corrected here by
+# shrinking nvs to 0x5000 (20 KB) — plenty: config is <4 KB (T-4.1 static_assert).
+#
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x5000,
+otadata,  data, ota,      0xe000,   0x2000,
+app0,     app,  ota_0,    0x10000,  0x400000,
+app1,     app,  ota_1,    0x410000, 0x400000,
+logos,    data, 0x40,     0x810000, 0x200000,
+web,      data, spiffs,   0xa10000, 0x100000,
