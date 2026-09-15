@@ -50,7 +50,7 @@ ESPN embeds full team records, venue, odds, broadcast listings, leaders and head
 
 Filtering solves the memory problem (~4.5 KB retained from 1.46 MB) but **not** the transfer problem — the bytes still cross the TLS socket. At ~300–600 KB/s that is 3–6 s per MLB poll. Mitigations, in order of value:
 
-1. **Narrow the date window** (T-5.6). The Python requests `yesterday-tomorrow`; three days of MLB is most of that 1.46 MB. ~3× reduction.
+1. **Narrow the date window** (T-5.6) — **REQUIRED.** The Python requests `yesterday-tomorrow`; three days of MLB is most of that 1.46 MB. ~3× reduction. Hardware measured **6,081 ms unmitigated against a < 6 s budget**, so this is the mitigation the gate's GO verdict assumed, not an optional speed-up.
 2. **Buffer the stream** (T-5.3). `deserializeJson()` reads a `Stream` **one byte at a time** by default. Wrap it in `ReadBufferingStream` (StreamUtils) with a 512–1024 B chunk — the ArduinoJson docs cite ~20× faster reads. Without this, the 1.46 MB response is byte-by-byte over TLS.
 3. **Stagger league polls** (T-5.7). Never concurrent.
 4. **Pin `poll` to core 0** (T-1.5). Non-negotiable.
@@ -207,16 +207,22 @@ Games parse correctly — spot-check scores and team abbreviations against the f
 
 **T-1.2 — `partitions.csv`.** Two app slots for OTA, plus data partitions.
 ```
-nvs       data nvs      0x9000   0x6000
-otadata   data ota      0xf000   0x2000
+nvs       data nvs      0x9000   0x5000
+otadata   data ota      0xe000   0x2000
 app0      app  ota_0    0x10000  0x400000
-app1      app  ota_1             0x400000
-logos     data 0x40              0x200000
-web       data spiffs            0x100000
+app1      app  ota_1   0x410000  0x400000
+logos     data 0x40    0x810000  0x200000
+web       data spiffs  0xa10000  0x100000
 ```
+
+> **Corrected at T-1.2.** This table originally gave `nvs` 0x6000, putting `otadata` at 0xf000 — and 0xf000 + 0x2000 =
+> 0x11000, which **overlaps `app0` at 0x10000**. `nvs` is now 0x5000 (20 KB), which is ample: T-4.1 `static_assert`s the
+> whole config under 4 KB. Verified on hardware — `esp_partition_find_first` locates `logos` at 0x810000 and `web` at
+> 0xa10000.
+
 *Accept:* flashes and boots; `esp_partition_find` locates `logos` and `web`.
 
-**T-1.3 — Build configuration.** `sdkconfig.defaults` / `build_flags`: PSRAM enabled octal, mbedTLS settings from T-0.6, `CONFIG_ESP32S3_DATA_CACHE_64KB`, C++17.
+**T-1.3 — Build configuration.** `sdkconfig.defaults` / `build_flags`: PSRAM enabled octal, mbedTLS settings from T-0.6, C++17. **Not** `CONFIG_ESP32S3_DATA_CACHE_64KB` — every Arduino-ESP32 prebuilt ships a 32 KB data cache and the setting is unreachable until the T-9.3 IDF conversion, the same class of limitation as the mbedTLS options at T-0.6. Log the actual cache size at boot rather than asserting it in a config file nobody reads.
 *Accept:* settings verified present at runtime, not just in the file.
 
 **T-1.4 — Directory skeleton.** Create the tree from `AGENTS.md` with placeholder headers.
@@ -363,8 +369,11 @@ Every call must pass `DeserializationOption::NestingLimit(20)` alongside the fil
 **T-5.5 — Normalisation.** Port `norm_game`, `norm_team_from_competitor`, `norm_team_from_teams_endpoint`, `_norm_situation`, `_safe_int`, `_parse_date`. Missing fields degrade, never throw.
 *Accept:* host tests over all six fixtures produce games matching the Python's output field-for-field.
 
-**T-5.6 — Narrow the date window.** Request a **single day**, with a separate opportunistic fetch for yesterday only when the "show yesterday's finals" path needs it. Port `_filter_by_date` for the local-timezone day boundary.
-*Accept:* MLB response size measured on device and recorded — expect ~3× smaller than the 1.46 MB fixture. *(Worth backporting to the Python too.)*
+**T-5.6 — Narrow the date window. REQUIRED, not an optimisation.** Request a **single day**, with a separate opportunistic fetch for yesterday only when the "show yesterday's finals" path needs it. Port `_filter_by_date` for the local-timezone day boundary.
+
+> ⚠️ **T-0.5 on hardware measured 6,081 ms against a < 6 s budget — an 81 ms miss, unmitigated.** The gate was called GO on the basis that this mitigation exists, so shipping without it means the live-game poll path is over budget by construction. This is no longer a tuning task to reach for if things feel slow; it is the mitigation the go/no-go decision was predicated on. Do not defer it.
+
+*Accept:* MLB response size and end-to-end fetch+parse time measured **on device** and recorded — expect ~3× smaller and ~2–3 s. If it does not land under 6 s with comfortable margin, escalate to T-11.3 (gzip) rather than accepting an at-budget number. *(Worth backporting to the Python too.)*
 
 **T-5.7 — Poll task.** Iterate enabled leagues **sequentially, never concurrently**. Live cadence 15–30 s, idle far slower, per `LeagueConfig`. Stagger start times so two leagues never align.
 *Accept:* only one TLS session ever open — verify with a heap watermark log. Full cycle across five leagues completes without the render task dropping below 28 fps.
