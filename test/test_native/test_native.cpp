@@ -12,6 +12,7 @@
 #include <cstring>
 
 #include "canvas.h"
+#include "config.h"
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
@@ -260,6 +261,55 @@ static void test_logos_parse_host(void) {
     free(atlas);
 }
 
+// T-4.1 — POD config structs + defaults (port of Marquee seed_defaults).
+static void test_config_defaults(void) {
+    using namespace nb::config;
+    // 4 KB blob cap is a compile-time static_assert; re-check numerically.
+    TEST_ASSERT_TRUE(sizeof(Config) < 4096);
+
+    Config c;
+    set_defaults(c);
+    TEST_ASSERT_TRUE(validate(c));
+    TEST_ASSERT_EQUAL_UINT16(kSchemaVersion, c.schema);
+    // HardwareSetting(id=1) defaults
+    TEST_ASSERT_EQUAL_UINT16(32, c.hw.rows);
+    TEST_ASSERT_EQUAL_UINT16(64, c.hw.cols);
+    TEST_ASSERT_EQUAL_UINT16(1, c.hw.chain_length);
+    TEST_ASSERT_EQUAL_UINT8(80, c.hw.brightness);
+    TEST_ASSERT_EQUAL_UINT8(1, c.hw.preemption_enabled);
+    TEST_ASSERT_EQUAL_UINT16(30, c.hw.preemption_dwell_s);
+    TEST_ASSERT_EQUAL_FLOAT(40.0f, c.hw.scroll_speed);
+    TEST_ASSERT_EQUAL_UINT8(8, c.hw.card_gap);
+    TEST_ASSERT_EQUAL_STRING("", c.hw.timezone);
+    // Widgets: boot_splash, clock, then 8 scoreboards (mlb first, rest sorted)
+    TEST_ASSERT_EQUAL_UINT16(10, c.widget_count);
+    TEST_ASSERT_EQUAL_STRING("boot_splash", c.widgets[0].id);
+    TEST_ASSERT_EQUAL_STRING("clock", c.widgets[1].id);
+    TEST_ASSERT_EQUAL_STRING("scoreboard_mlb", c.widgets[2].id);
+    TEST_ASSERT_EQUAL_UINT8(1, c.widgets[2].enabled);
+    TEST_ASSERT_EQUAL_STRING("mlb", c.widgets[2].league);
+    TEST_ASSERT_EQUAL_STRING("scoreboard_college-football", c.widgets[3].id);
+    TEST_ASSERT_EQUAL_STRING("scoreboard_womens-college-basketball",
+                             c.widgets[c.widget_count - 1].id);  // longest id fits
+    for (uint16_t i = 3; i < c.widget_count; ++i)
+        TEST_ASSERT_EQUAL_UINT8(0, c.widgets[i].enabled);
+    // LeagueConfig: one row per slug, only mlb enabled, 20/120 cadence
+    TEST_ASSERT_EQUAL_UINT16(kLeagueSlugCount, c.league_count);
+    int mlb_rows = 0;
+    for (uint16_t i = 0; i < c.league_count; ++i) {
+        if (strcmp(c.leagues[i].id, "mlb") == 0) {
+            ++mlb_rows;
+            TEST_ASSERT_EQUAL_UINT8(1, c.leagues[i].enabled);
+        } else {
+            TEST_ASSERT_EQUAL_UINT8(0, c.leagues[i].enabled);
+        }
+        TEST_ASSERT_EQUAL_UINT16(20, c.leagues[i].poll_interval_live);
+        TEST_ASSERT_EQUAL_UINT16(120, c.leagues[i].poll_interval_idle);
+    }
+    TEST_ASSERT_EQUAL_INT(1, mlb_rows);
+    TEST_ASSERT_EQUAL_UINT16(0, c.favorite_count);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -270,5 +320,6 @@ int main(void) {
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);
+    RUN_TEST(test_config_defaults);
     return UNITY_END();
 }

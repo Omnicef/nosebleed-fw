@@ -180,4 +180,28 @@ Guru Meditation Error: Core 1 panic'ed — Debug exception reason: BREAK instr
   reboot-loops it deliberately. "Never fires during a 60 s scroll" is deferred
   to Phase 6/7 with the scroll engine; the guard itself is proven live.
 - Core dump prints (`No core dump partition`) are noise — no coredump
-  partition in our table; harmless.
+   partition in our table; harmless.
+
+## Phase 4 — T-4.1 config structs (2026-09-16)
+
+`lib/config/config.h` + `config.cpp` — POD mirrors of the four Marquee
+SQLModel tables plus magic/schema, one fixed-size NVS blob. Pi fields
+dropped (hardware_mapping, gpio_slowdown, pwm_bits, pwm_dither_bits,
+pixel_mapper_config, led_rgb_sequence); ESP32 panel-timing fields added
+(lsb_msb_transition_bit, clkphase, latch_blanking, i2sspeed, double_buff).
+`options_json` → typed `char league[26]` (only ever held `{"league": ...}`).
+
+Sizes: HW 60, Widget 92 ×16, League 32 ×12, Favorite 85 ×16 →
+**`sizeof(Config)` = 3292 B < 4096** (`static_assert`, T-4.1 accept — the
+20 KB NVS partition has 4× headroom even with NVS page overhead).
+
+`set_defaults` ports `seed_defaults()` exactly: boot_splash + clock +
+scoreboards in `_SCOREBOARD_LEAGUES` order (mlb first, rest sorted — the
+widget *id* uses that same order, `scoreboard_college-football` at idx 3);
+LeagueConfig row per slug in dict order, only mlb enabled, 20/120 s.
+
+Acceptance: `pio test -e native` **9/9** (`test_config_defaults` checks
+sizes, widget order/ids/flags, league cadence, longest-id fit). The header's
+own `static_assert` caught a miscount of `kLeagueSlugs` (8, not 9) while
+writing it.
+
