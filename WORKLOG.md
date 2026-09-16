@@ -151,3 +151,33 @@ optional, malformed rejected). Golden parity 0/2048 px; null-art blit is
 safe (false, canvas untouched — never crash/blank, T-3.6 acceptance).
 
 `pio test -e native` 8/8; purity guard clean; `esp32s3` build green.
+
+### T-3.4/T-3.7 — device proof (board reconnected)
+
+`logostest` firmware + `logos.bin` @ 0x810000 (`write_flash`, hash verified).
+Serial capture, identical across three auto-reboot cycles:
+
+```
+init=1 count=144 logo_h=32
+mmap internal free delta=-104 largestblk delta=0 (one-time mapping)
+mlb:BOS OK w=23 h=32 hash=a917f7d6   nfl:KC OK w=32 h=21 hash=2b7038d9
+nba:LAL OK w=32 h=20 hash=eacc63aa   nhl:VGK OK w=24 h=32 hash=1621bb28
+epl:LIV OK w=17 h=32 hash=1b0feca6   nhl:BOS OK w=32 h=32 hash=6322ff39
+mlb:ZZZ OK (miss)
+lookups: internal free delta=0 largestblk delta=0 (must be 0/0)
+RESULT: PASS
+trap expected now: FRAME-phase lookup
+Guru Meditation Error: Core 1 panic'ed — Debug exception reason: BREAK instr
+```
+
+- **T-3.4 accepted**: all six hashes match host values computed from the
+  same file on the laptop; lookup heap delta **exactly 0/0**. The −104 B is
+  `esp_partition_mmap`'s one-time page-table allocation, measured separately
+  from the lookups (first draft mixed them and read −104 against a 0/0 gate —
+  measurement split, not code, was wrong).
+- **T-3.7 mechanism accepted**: FRAME-phase `lookup()` traps (`__builtin_trap`
+  emits `break` on Xtensa → BREAK instr, EXCCAUSE 1) and the test firmware
+  reboot-loops it deliberately. "Never fires during a 60 s scroll" is deferred
+  to Phase 6/7 with the scroll engine; the guard itself is proven live.
+- Core dump prints (`No core dump partition`) are noise — no coredump
+  partition in our table; harmless.
