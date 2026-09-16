@@ -12,8 +12,12 @@
 #include <cstring>
 #include <ctime>
 #include <type_traits>
+#include <atomic>
+#include <chrono>
+#include <thread>
 
 #include "canvas.h"
+#include "cache.h"
 #include "config.h"
 #include "game.h"
 #include "timezone.h"
@@ -31,6 +35,45 @@ using namespace nb;
 
 void setUp(void) {}
 void tearDown(void) {}
+
+// T-5.2 — self-consistent generation payloads. Every field of every game is
+// a pure function of `gen`, so a snapshot that mixes two generations is
+// detectable exactly, not statistically. Returns 0 or the offending gen.
+static int check_generation(const data::GameList& l) {
+    using namespace data;
+    if (l.count < 1 || l.count > kMaxGamesPerLeague) return -1;
+    const uint32_t gen = static_cast<uint32_t>(l.games[0].start_utc);
+    char id[16];
+    std::snprintf(id, sizeof id, "%u", gen);
+    if (l.count != 1 + static_cast<int>(gen % kMaxGamesPerLeague)) return static_cast<int>(gen);
+    for (int i = 0; i < l.count; i++) {
+        const Game& g = l.games[i];
+        if (g.start_utc != (int64_t)gen || std::strcmp(g.id, id) != 0 ||
+            g.period != (int16_t)(gen % 1000) || g.away_score != (int16_t)(gen % 10) ||
+            g.home_score != (int16_t)(gen % 100) || g.situation.outs != (int16_t)(gen % 4) ||
+            g.away.colour != gen * 2654435761u)
+            return static_cast<int>(gen);
+    }
+    return 0;
+}
+
+static void fill_generation(data::GameList* l, uint32_t gen) {
+    using namespace data;
+    l->count = 1 + static_cast<int>(gen % kMaxGamesPerLeague);
+    char id[16];
+    std::snprintf(id, sizeof id, "%u", gen);
+    for (int i = 0; i < l->count; i++) {
+        Game& g = l->games[i];
+        copy_str(g.id, sizeof g.id, id);
+        copy_str(g.status_display, sizeof g.status_display, "Gen");
+        g.period = static_cast<int16_t>(gen % 1000);
+        g.away_score = static_cast<int16_t>(gen % 10);
+        g.home_score = static_cast<int16_t>(gen % 100);
+        g.start_utc = gen;
+        g.situation.outs = static_cast<int16_t>(gen % 4);
+        g.away.colour = gen * 2654435761u;
+    }
+}
 
 static void expand_to_rgb(const Canvas16& c, uint8_t* out) {
     for (uint32_t i = 0; i < static_cast<uint32_t>(c.w) * c.h; ++i) {
@@ -505,6 +548,136 @@ static void test_data_structs(void) {
     TEST_ASSERT_EQUAL_INT(1234567890, (int)b.fetched_utc);
 }
 
+// T-5.2: basic DataCache semantics — never-published, fill-visible-late,
+// freshness/staleness (Marquee cache.py: factor 2.5 x poll interval).
+static void test_data_cache_basic(void) {
+    using namespace nb::data;
+    static DataCache cache;  // 58 KB: static, never on a task stack (T-4.2 habit)
+
+    GameList snap;
+    TEST_ASSERT_FALSE(cache.snapshot(0, &snap));
+    TEST_ASSERT_EQUAL_INT(-1, (int)cache.last_fetch_age(0, 5000));
+    TEST_ASSERT_TRUE(cache.is_stale(0, 20, 5000));
+
+    GameList* w = cache.writable(0);
+    fill_generation(w, 7);
+    TEST_ASSERT_TRUE(check_generation(*w) == 0);
+    // Pre-publish the cache still serves nothing, and a snapshot during a
+    // fill (poll parsing, render running) must see the OLD list, not the
+    // half-filled buffer.
+    cache.publish(0, 1000);
+    TEST_ASSERT_TRUE(cache.snapshot(0, &snap));
+    TEST_ASSERT_TRUE(check_generation(snap) == 0);
+    TEST_ASSERT_EQUAL_INT(7, (int)snap.games[0].start_utc);
+    TEST_ASSERT_EQUAL_INT(10, (int)cache.last_fetch_age(0, 1010));
+    TEST_ASSERT_FALSE(cache.is_stale(0, 20, 1050));  // 50 <= 20*2.5
+    TEST_ASSERT_TRUE(cache.is_stale(0, 20, 1051));   // 51 >  50
+
+    GameList* w2 = cache.writable(0);
+    TEST_ASSERT_TRUE(cache.snapshot(0, &snap) && snap.games[0].start_utc == 7);  // old still current
+    fill_generation(w2, 8);
+    cache.publish(0, 2000);
+    TEST_ASSERT_TRUE(cache.snapshot(0, &snap));
+    TEST_ASSERT_EQUAL_INT(8, (int)snap.games[0].start_utc);
+
+    // Empty slate (all games finished = count 0) still counts as fetched.
+    GameList* w3 = cache.writable(0);
+    w3->count = 0;
+    cache.publish(0, 3000);
+    TEST_ASSERT_TRUE(cache.snapshot(0, &snap));
+    TEST_ASSERT_EQUAL_INT(0, snap.count);
+    TEST_ASSERT_EQUAL_INT(0, (int)cache.last_fetch_age(0, 3000));
+}
+
+// T-5.2 accept: "writing at 50 Hz while reading at 30 Hz produces no torn
+// reads — verify explicitly; this is the rule the Python never had to obey."
+// Two phases. First the CONTROL: the exact forbidden pattern (mutate the
+// current list in place, reader holds a pointer to it) must FAIL this
+// detector — proving the harness has teeth. Then the real DataCache with
+// the same adversarial traffic must show zero violations.
+static void test_data_cache_stress(void) {
+    using namespace nb::data;
+    using clock = std::chrono::steady_clock;
+    const auto dur = std::chrono::milliseconds(1500);
+
+    // --- control: forbidden in-place mutation. Two threads, one buffer. ---
+    alignas(GameList) static unsigned char control_mem[sizeof(GameList)];
+    GameList* shared = reinterpret_cast<GameList*>(control_mem);
+    {
+        std::atomic<bool> stop{false};
+        std::atomic<int> torn{0};
+        std::thread writer([&] {
+            uint32_t gen = 0;
+            while (!stop.load()) {
+                fill_generation(shared, ++gen);  // in place: the forbidden pattern
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        });
+        std::thread reader([&] {  // "render": holds the pointer across the read
+            const auto t0 = clock::now();
+            volatile uint32_t spin = 0;
+            while (!stop.load() && clock::now() - t0 < dur) {
+                GameList* held = shared;  // no swap, no seqlock: same object
+                int saw = -1;
+                for (int i = 0; i < held->count; i++) {  // dwell ~game like a strip rebuild
+                    int64_t g = held->games[i].start_utc;
+                    for (uint32_t k = 0; k < 2000; k++) spin += k;  // work between games
+                    if (g != saw && saw != -1) { torn.fetch_add(100); break; }
+                    saw = (int)g;
+                }
+                if (check_generation(*held) != 0) torn.fetch_add(1);
+            }
+            stop.store(true);
+        });
+        writer.join(); reader.join();
+        std::printf("  control (forbidden in-place mutation): %d violations — harness has teeth\n",
+                    torn.load());
+        TEST_ASSERT_TRUE_MESSAGE(torn.load() > 0,
+                                 "stress detector cannot see a torn read — accept criteria void");
+    }
+
+    // --- real DataCache: same dual-core-style adversarial race. ---
+    static DataCache cache;
+    {
+        std::atomic<bool> stop{false};
+        std::atomic<int> torn{0}, reads{0}, busy{0}, max_busy{0};
+        std::thread writer([&] {  // poll: 50 Hz cycles x 4 leagues = 200 Hz per league
+            uint32_t gen = 0;
+            const auto t0 = clock::now();
+            while (!stop.load() && clock::now() - t0 < dur) {
+                for (int l = 0; l < 4; l++) {
+                    GameList* b = cache.writable(l);
+                    fill_generation(b, ++gen);
+                    cache.publish(l, gen);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            stop.store(true);
+        });
+        std::thread reader([&] {  // render: 30 Hz snapshots
+            GameList* snap = new GameList;
+            const auto t0 = clock::now();
+            while (!stop.load() && clock::now() - t0 < dur) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(33));
+                if (!cache.snapshot(0, snap)) {
+                    int b = ++busy;
+                    if (b > max_busy.load()) max_busy.store(b);
+                    continue;
+                }
+                reads++;
+                int bad = check_generation(*snap);
+                if (bad) torn.fetch_add(1);
+            }
+            delete snap;
+        });
+        writer.join(); reader.join();
+        std::printf("  DataCache stress: %d reads, %d contended retries (max %d), %d torn\n",
+                    reads.load(), busy.load(), max_busy.load(), torn.load());
+        TEST_ASSERT_EQUAL_MESSAGE(0, torn.load(), "TORN READ in DataCache");
+        TEST_ASSERT_TRUE(reads.load() > 10);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -522,5 +695,7 @@ int main(void) {
     RUN_TEST(test_config_tzmap);
     RUN_TEST(test_config_timezone);
     RUN_TEST(test_data_structs);
+    RUN_TEST(test_data_cache_basic);
+    RUN_TEST(test_data_cache_stress);
     return UNITY_END();
 }

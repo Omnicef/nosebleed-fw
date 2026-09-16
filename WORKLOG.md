@@ -376,3 +376,26 @@ league+abbr, never a URL). `copy_str` truncates, never leaves unterminated,
 nullptr-safe. `static_assert` trivially-copyable — the cache memcpy's whole
 GameLists. Measured: Game=224 B, GameList=3600 B (16 games), whole DataCache
 (8 leagues × 2 buffers) = 57.6 KB PSRAM. Native 14/14.
+
+## T-5.2 — DataCache with pointer swap (2026-09-16)
+
+`lib/data/cache.{h,cpp}`. PLAN wording "swap a pointer atomically" is *not
+safe with two recycled buffers*: a reader holding the old pointer is still
+copying it when the writer refills that buffer two commits later. Cure =
+per-buffer monotonic change counter (seqlock): `writable()` bumps before a
+single byte is touched (acq_rel full barrier — the bump's visibility gates
+every fill store), `publish()` flips the counter even then swaps `cur` with
+release. `snapshot()` = memcpy + validate counter-and-pointer, ≤8 retries,
+then false → render keeps the last strip (never blocks: no mutex, no wait).
+A buffer refill can only start after two publishes, so any interleaved
+recycle changes the counter value, not just parity — stale matches
+impossible.
+Stress test does what the accept criteria say ("verify explicitly"):
+50 Hz×4-league writer (200 Hz per league) vs 30 Hz reader for 1.5 s, every
+game's fields a pure function of a generation number → mixed-generation read
+is *exactly* detectable. First runs the CONTROL — the forbidden pattern
+(mutate the current list in place, reader holds the pointer) — and asserts it
+VIOLATES (≈70,000 caught/3 runs): the detector demonstrably has teeth. Then
+the real cache: 0 torn, 0 retries, in 3/3 runs. Whole DataCache = 57.6 KB
+PSRAM (static on device, never a task stack). -pthread added to env:native.
+Native 17/17.
