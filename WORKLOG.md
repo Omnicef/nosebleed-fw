@@ -264,3 +264,19 @@ an impossible M-rule. Numeric abbreviations ("+03", Chile's "-03") aren't
 valid POSIX names → `XXX` (offset preserved; the clock only needs the
 offset). Rule time is `t + prev_offset` — using `t-1` produced a system-
 atic `/1:59` off-by-one. Native 12/12.
+
+## T-4.6 — timezone resolution (2026-09-16)
+
+`lib/config/timezone.{h,cpp}`: `apply_timezone(iana)` → `tz_lookup` →
+`setenv("TZ")/tzset()`. Empty → UTC0 + `kUtcEmpty` (Phase 6 clock draws the
+indicator); unknown name → UTC0 + `kUtcUnknown`, never a crash. Host and
+device share the code path; the device just has no tzdata, so the POSIX
+string IS the zone — which the host test verifies by construction.
+Ported Marquee test_timezone.py: section A (helper semantics) and the
+NY-vs-UTC local-date-of-now discriminator from section C, plus NY spring/
+fall and Sydney southern-hemisphere DST boundaries at second resolution.
+Sections B/D are ESPN date-window and scoreboard-visibility tests — Phase 5
+and 6 territory, port there. Three self-inflicted wrong expectations caught
+by Python cross-check before trusting a red test (06:59 UTC is Mar 8 not 7;
+Sydney's Oct 4 02:00 local is Oct 3 UTC; the discriminator is now's local
+date, not game X's). Native 13/13.

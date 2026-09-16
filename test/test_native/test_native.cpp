@@ -10,9 +10,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 #include "canvas.h"
 #include "config.h"
+#include "timezone.h"
 #include "tzmap.h"
 #include "font.h"
 #include "font_data.h"
@@ -384,6 +386,64 @@ static void test_config_tzmap(void) {
                                      kTzNamePool + kTzTable[i].name_off) < 0);
 }
 
+// T-4.6: port of Marquee test_timezone.py sections A + C (B is the ESPN
+// date window, lands in Phase 5). "Faked clock" = injected epoch.
+static time_t mk_epoch(int y, int mo, int d, int h, int mi = 0, int s = 0) {
+    struct tm u = {};
+    u.tm_year = y - 1900; u.tm_mon = mo - 1; u.tm_mday = d;
+    u.tm_hour = h; u.tm_min = mi; u.tm_sec = s;
+    return timegm(&u);
+}
+
+static void local_at(time_t e, struct tm* t) { localtime_r(&e, t); }
+
+static void test_config_timezone(void) {
+    using namespace nb::config;
+    // A: empty -> UTC with indicator status; named -> applied; unknown -> UTC fallback
+    TEST_ASSERT_EQUAL_INT((int)TzResult::kUtcEmpty, (int)apply_timezone(""));
+    TEST_ASSERT_EQUAL_INT((int)TzResult::kApplied, (int)apply_timezone("America/New_York"));
+    TEST_ASSERT_EQUAL_INT((int)TzResult::kUtcUnknown, (int)apply_timezone("Mars/Olympus_Mons"));
+
+    // Anchor from the Python: 2026-06-15 02:00 UTC = June 14 22:00 EDT
+    apply_timezone("America/New_York");
+    struct tm t;
+    local_at(mk_epoch(2026, 6, 15, 2), &t);
+    TEST_ASSERT_EQUAL_INT(2026 - 1900, t.tm_year);
+    TEST_ASSERT_EQUAL_INT(5, t.tm_mon);  // June
+    TEST_ASSERT_EQUAL_INT(14, t.tm_mday);
+    TEST_ASSERT_EQUAL_INT(22, t.tm_hour);
+    TEST_ASSERT_EQUAL_INT(1, t.tm_isdst);
+
+    // NY spring-forward 2026-03-08 02:00 local (07:00 UTC)
+    local_at(mk_epoch(2026, 3, 8, 6, 59), &t);
+    TEST_ASSERT_EQUAL_INT(8, t.tm_mday); TEST_ASSERT_EQUAL_INT(1, t.tm_hour); TEST_ASSERT_EQUAL_INT(0, t.tm_isdst);
+    local_at(mk_epoch(2026, 3, 8, 7, 0), &t);
+    TEST_ASSERT_EQUAL_INT(8, t.tm_mday); TEST_ASSERT_EQUAL_INT(3, t.tm_hour); TEST_ASSERT_EQUAL_INT(1, t.tm_isdst);
+    // fall-back 2026-11-01 02:00 local (06:00 UTC)
+    local_at(mk_epoch(2026, 11, 1, 5, 59), &t);
+    TEST_ASSERT_EQUAL_INT(1, t.tm_hour); TEST_ASSERT_EQUAL_INT(1, t.tm_isdst);
+    local_at(mk_epoch(2026, 11, 1, 6, 0), &t);
+    TEST_ASSERT_EQUAL_INT(1, t.tm_hour); TEST_ASSERT_EQUAL_INT(0, t.tm_isdst);
+
+    // Southern hemisphere: Sydney springs forward 2026-10-04 02:00 AEST (16:00 UTC)
+    apply_timezone("Australia/Sydney");
+    local_at(mk_epoch(2026, 10, 3, 15, 59), &t);
+    TEST_ASSERT_EQUAL_INT(4, t.tm_mday); TEST_ASSERT_EQUAL_INT(1, t.tm_hour); TEST_ASSERT_EQUAL_INT(0, t.tm_isdst);
+    local_at(mk_epoch(2026, 10, 3, 16, 0), &t);
+    TEST_ASSERT_EQUAL_INT(4, t.tm_mday); TEST_ASSERT_EQUAL_INT(3, t.tm_hour); TEST_ASSERT_EQUAL_INT(1, t.tm_isdst);
+
+    // C: the local-date-of-now that the Phase 5 window filter keys on:
+    // now = 2026-06-15 02:00 UTC -> "today" is June 15 in UTC, June 14 in NY.
+    const time_t now = mk_epoch(2026, 6, 15, 2);
+    apply_timezone("UTC");
+    local_at(now, &t);
+    const int utc_day = t.tm_mday;
+    apply_timezone("America/New_York");
+    local_at(now, &t);
+    TEST_ASSERT_EQUAL_INT(15, utc_day);
+    TEST_ASSERT_EQUAL_INT(14, t.tm_mday);  // June 14 22:00 EDT
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -398,5 +458,6 @@ int main(void) {
     RUN_TEST(test_config_validate);
     RUN_TEST(test_config_structural_change);
     RUN_TEST(test_config_tzmap);
+    RUN_TEST(test_config_timezone);
     return UNITY_END();
 }
