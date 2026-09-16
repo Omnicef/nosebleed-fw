@@ -106,6 +106,93 @@ static void logos_test() {
 }
 #endif  // NB_LOGOS_TEST
 
+#ifdef NB_CONFIG_TEST
+// T-4.2 — NVS config store proof (env:configtest). Boot A: absent →
+// defaults, brightness round-trip, garbage blob → defaults (no crash
+// loop), truncated-valid-prefix → defaults; then save brightness=55 and
+// esp_restart. Boot B: load must report the persisted 55 (power-cycle
+// persistence), then reset the blob and halt.
+#include <cstring>
+#include <Preferences.h>
+#include "config.h"
+#include "store.h"
+#include "esp_system.h"
+
+static void config_test() {
+    using namespace nb::config;
+    int fails = 0;
+    Serial.println("T-4.2 NVS config test (boot A):");
+
+    static Config c, c3, c4;  // 3.3 KB each — never on the loopTask stack
+    Config& c2 = c;               // reused after step 1; no second copy needed
+    // 1. absent blob -> defaults
+    reset();
+    if (load(c) || c.hw.brightness != 80 || c.widget_count != 10) {
+        ++fails; Serial.println("  absent->defaults FAIL");
+    } else {
+        Serial.println("  absent->defaults OK (load=false, brightness=80, widgets=10)");
+    }
+
+    // 2. round-trip: brightness 55
+    c.hw.brightness = 55;
+    if (!save(c)) ++fails;
+    const bool rt = load(c2) && c2.hw.brightness == 55;
+    Serial.printf("  save/load brightness=55: %s\n", rt ? "OK" : "FAIL");
+    if (!rt) ++fails;
+
+    // 3. deliberate garbage (0xFF blob) -> defaults, no crash
+    {
+        Preferences p;
+        p.begin("nb");
+        uint8_t junk[200];
+        memset(junk, 0xFF, sizeof(junk));
+        p.putBytes("cfg", junk, sizeof(junk));
+        p.end();
+    }
+    if (load(c3) || c3.hw.brightness != 80 || c3.widget_count != 10) {
+        ++fails; Serial.println("  garbage->defaults FAIL");
+    } else {
+        Serial.println("  garbage(0xFF x200)->defaults OK, no crash");
+    }
+
+    // 4. valid magic+schema but wrong length -> defaults (size gate)
+    {
+        Preferences p;
+        p.begin("nb");
+        p.putBytes("cfg", &c, 100);  // c is a valid Config; truncated blob
+        p.end();
+    }
+    if (load(c4) || c4.hw.brightness != 80) {
+        ++fails; Serial.println("  truncated->defaults FAIL");
+    } else {
+        Serial.println("  truncated(valid prefix,100 B)->defaults OK");
+    }
+
+    // 5. stage the persistence check, then restart into boot B
+    load(c);
+    c.hw.brightness = 55;
+    save(c);
+    Serial.printf("  RESULT: %s (boot A); restarting to prove persistence\n",
+                  fails ? "FAIL" : "PASS");
+    Serial.flush();
+    delay(100);
+    esp_restart();
+}
+
+static void config_boot_check(const nb::config::Config& c) {
+    Serial.printf("T-4.2 boot B persisted load: brightness=%u widgets=%u\n",
+                  static_cast<unsigned>(c.hw.brightness),
+                  static_cast<unsigned>(c.widget_count));
+    Serial.println(c.hw.brightness == 55
+                       ? "  RESULT: PASS (boot B — survives restart)"
+                       : "  RESULT: FAIL (boot B)");
+    nb::config::reset();
+    Serial.println("  blob reset; halting");
+    for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+}
+#endif  // NB_CONFIG_TEST
+
+
 // T-1.2 accept: esp_partition_find locates the `logos` and `web` data partitions.
 static void partition_snapshot(void) {
   Serial.println("partitions (T-1.2):");
@@ -175,6 +262,16 @@ void setup() {
 #ifdef NB_LOGOS_TEST
   logos_test();  // never returns; tasks below are for normal boots only
 #endif
+
+#ifdef NB_CONFIG_TEST
+  {
+    // Boot A = fresh/other blob; boot B = ours staged before esp_restart.
+    static nb::config::Config c;
+    if (nb::config::load(c) && c.hw.brightness == 55) config_boot_check(c);
+    else config_test();  // both branches never return
+  }
+#endif
+
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.

@@ -310,6 +310,33 @@ static void test_config_defaults(void) {
     TEST_ASSERT_EQUAL_UINT16(0, c.favorite_count);
 }
 
+// T-4.2 — corruption gate shared with the device store: garbage, zeros,
+// wrong schema and out-of-range counts must all be rejected (defaults
+// fallback); a valid blob accepted. The device test writes real garbage
+// to NVS; this pins the validate() contract both sides use.
+static void test_config_validate(void) {
+    using namespace nb::config;
+    Config good;
+    set_defaults(good);
+    TEST_ASSERT_TRUE(validate(good));
+
+    Config junk;
+    memset(&junk, 0xFF, sizeof(junk));
+    TEST_ASSERT_FALSE(validate(junk));
+    memset(&junk, 0, sizeof(junk));
+    TEST_ASSERT_FALSE(validate(junk));
+
+    Config bad = good;
+    bad.schema = kSchemaVersion + 1;  // future/other schema → rebuild, not trust
+    TEST_ASSERT_FALSE(validate(bad));
+    bad = good;
+    bad.widget_count = kMaxWidgets + 1;  // out-of-range count → reject
+    TEST_ASSERT_FALSE(validate(bad));
+    bad = good;
+    bad.favorite_count = 0xFFFF;
+    TEST_ASSERT_FALSE(validate(bad));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -321,5 +348,6 @@ int main(void) {
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);
     RUN_TEST(test_config_defaults);
+    RUN_TEST(test_config_validate);
     return UNITY_END();
 }

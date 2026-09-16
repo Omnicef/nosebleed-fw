@@ -205,3 +205,22 @@ sizes, widget order/ids/flags, league cadence, longest-id fit). The header's
 own `static_assert` caught a miscount of `kLeagueSlugs` (8, not 9) while
 writing it.
 
+
+## T-4.2 — NVS store (2026-09-16)
+
+`lib/config/store.{h,cpp}` — one namespace `"nb"`, one blob `"cfg"`.
+`load()` = getBytesLength == sizeof(Config) && getBytes && validate, else
+`set_defaults` + persist (absent/corrupt self-heals). API verified against
+installed `Preferences.h` (getBytes returns 0 on absent OR len>maxLen —
+size-mismatch corruption lands in the fallback path for free).
+
+**Hardware proof (env:configtest, /dev/ttyACM0).** Boot A: absent→defaults,
+brightness 55 round-trip, deliberate garbage (0xFF×200)→defaults no crash,
+valid-prefix-100 B→defaults. Then self-`esp_restart`; boot B reads
+persisted 55 back → PASS, blob reset, halts.
+
+**Caught the real failure mode first:** five 3.3 KB `Config` locals blew
+loopTask's 8 KB stack (CORRUPT HEAP, then stack-canary panic reboot loop).
+Test instances are `static` now. Rule for Phase 8: **`Config` never goes on
+a task stack** — the web `cfg` handlers and every task must pass pointers to
+static/heap instances. The render task stack note in `AGENTS.md` is 8 KB too.
