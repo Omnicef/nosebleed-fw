@@ -551,3 +551,13 @@ its PLL timer on every wake and the alloc fails under TLS/parse churn.
 Fixed at both connect sites with `WiFi.setSleep(false)`: the panel is
 wall-powered, modem sleep buys nothing and costs the whole board.
 Production env also carries the fix.
+
+## T-5.8 — parser test corpus (2026-09-16)
+
+No code written — the corpus landed with T-5.4/T-5.5. Verified: all six
+Marquee fixtures are committed in `test/fixtures/` byte-identical to
+`tests/fixtures/` upstream (`cmp` clean), and `test_data_norm_golden`
+parses every one from a file stream through the same `parse_scoreboard`
+(stream + filter + NestingLimit 20) the device runs on a socket.
+Accept: 6/6 parse in `pio test -e native` (21/21); no test opens a
+socket.
