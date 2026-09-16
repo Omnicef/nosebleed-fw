@@ -70,6 +70,11 @@ Hardware: **SEENGREAT RGB Matrix Adapter Board (E)**, SKU 250911, ESP32-S3-DevKi
 - `begin()` OK. **`calculated_refresh_rate = 110 Hz`** — this is the lib's auto-derived value from `i2sspeed`/depth/`min_refresh_rate`; v3.0.15 made `lsbMsbTransitionBit` internal, so this reported figure is the refresh measurement. Matches the ≈110 Hz AGENTS predicts for the fast end.
 - DMA framebuffer **~30 KB internal SRAM** (free heap 344,376 → 313,520), single-buffered. Inside the ~32 KB budget.
 - **Signal path confirmed**: the full cycle (R/G/B/white fills → gradient → sweeping stripe) renders coherently across the whole 64×32. Wiring and level-shift are correct.
+  > **Amended at T-2.8 — this acceptance was insufficient.** "Coherent" was true and meant nothing: the V2.x
+  > adapter's actual wiring transposes G↔B vs. its silkscreen (silkscreen G1=GPIO8 is really B1, and G2/B2
+  > likewise), so this run rendered solid *blue* where it recorded "green". Solid fills cannot detect a channel
+  > permutation. **Acceptance for any panel/adapter bring-up is a colour-NAME test** — draw the words RED, GREEN,
+  > BLUE in their own colours and read the panel. The hardware-proven pin map now lives in `lib/panel/panel.cpp`.
 
 **Deferred — bright-white acceptance.** Bench has no 5 V/4 A supply, so the panel is on the devkit's USB and firmware is pinned to `setBrightness(16)` to stay under the PC port's 500 mA. The no-brown-out / no-ghosting / full-brightness check is **open until the real PSU is connected**.
 

@@ -27,7 +27,7 @@ Two things were validated on hardware before any of it was built, and both are r
 |---|---|
 | MCU | ESP32-S3-WROOM-1 **N16R8** — 16 MB flash, 8 MB octal PSRAM, dual LX7 @ 240 MHz |
 | Panel | HUB75, 64×32 default (configurable), 1/16 scan |
-| Adapter | DevKitC-1 carrier with a **74HCT245** level shifter |
+| Adapter | DevKitC-1 carrier with a **74HCT245** level shifter — on the SEENGREAT V2.x its silkscreen colour labels are **wrong** (G1/B1, G2/B2 transposed vs. wiring); the proven pin map in `lib/panel/panel.cpp` wins |
 | Power | 5 V @ 4 A minimum for one 64×32 panel, fed directly from the PSU |
 
 The level shifter is not optional — ESP32 GPIO is 3.3 V and HUB75 expects 5 V logic. See [`AGENTS.md`](AGENTS.md) for the full hardware notes.

@@ -22,6 +22,10 @@ Build it by following the phased plan in `PLAN.md` — **do not jump ahead**; ea
 - **MCU:** ESP32-S3-WROOM-1 **N16R8** — 16 MB quad flash, 8 MB **octal** PSRAM, dual Xtensa LX7 @ 240 MHz, 512 KB internal SRAM, native USB, 2.4 GHz WiFi + BLE 5.
 - **Panel:** HUB75, default 64×32, 1/16 scan. **Never hardcode 64×32** — read from config.
 - **Adapter:** DevKitC-1 carrier with a **74HCT245** level shifter. ESP32 GPIO is 3.3 V; HUB75 wants 5 V logic.
+  On the SEENGREAT V2.x carrier the **silkscreen colour labels are wrong**: G1/B1 and G2/B2 are transposed
+  vs. the actual wiring (silkscreen G1=GPIO8 is really B). `lib/panel/panel.cpp`'s pin map is the
+  **hardware-proven** order and wins over the silkscreen and the manufacturer wiki. Prove any new panel or
+  adapter with a colour-*name* test (the word GREEN drawn in green), never solid fills — coherent ≠ correct.
 - **Power:** panel from the PSU directly (5 V @ 4 A min for one 64×32, 8 A sustained full-white). Separate cable to the board. Shared rails brown out.
 
 ## Tech stack (decided — see PLAN.md §1)
@@ -82,7 +86,7 @@ the 50–80 KB expectation. SNTP is ~504 B in steady state — effectively free 
 
 | Consumer | Budget |
 |---|---|
-| HUB75 DMA framebuffer, 64×32, 8-bit depth, double-buffered | 32 KB |
+| HUB75 DMA framebuffer, 64×32, 8-bit depth, double-buffered | **61 KB** measured at `begin()` (32 KB fb + ~29 KB driver task stack/structs) |
 | mbedTLS session, peak, one connection | **53 KB** (measured; see below) |
 | HTTP stream buffer | 4–8 KB |
 | Task stacks (4) | ~32 KB |

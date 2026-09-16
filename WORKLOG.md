@@ -290,3 +290,77 @@ off the configtest image); boot serial shows
 `config: loaded (brightness=40)` / `timezone: '' -> UTC fallback` and all
 four heartbeats. Native 13/13. Accept criteria all met in T-4.1..T-4.6;
 nothing deferred to later phases. Phase 4 complete.
+
+## Phase 2 (late) — T-2.8 panel wrapper + both hardware faults (2026-09-16)
+
+`lib/panel/panel.{h,cpp}`: `MatrixPanel_I2S_DMA` behind an
+`ARDUINO`-guarded namespace (outside the render-purity guard's grep list —
+purity still clean). Config from `g_cfg.hw`, nothing hardcoded; `blit`,
+`splash`, `width/height/refresh_rate`, brightness 0-100→0-255. New
+`env:paneltest` builds `src/main.cpp` with `-DNB_PANEL_TEST`. Device proof:
+`begin()` OK 64×32, refresh=110 Hz, **internal heap -61,328 B at begin()**
+— the projected 32 KB was wrong: double-buffered fb is 32 KB, the driver's
+DMA task stack and structs add ~29 KB. §6 and the AGENTS budget table
+corrected to 61 KB.
+
+**FAULT 1 — green rendered blue (G/B transpose).** Isolated with a colour-
+*name* card (words RED/GREEN/BLUE in their own colours, static, one read —
+not fills, not timing). Consistent across all three words ruled out the
+colour constants; then every software link was checked against the
+installed v3.0.15 headers and cleared: our `rgb565` pack and the driver's
+`color565to888` unpack are textbook-inverse R15:11/G10:5/B4:0; the cfg has
+**no colour-order field** and the bus cfg hardwires `pin_d0..d5 = r1,g1,
+b1,r2,g2,b2` matching `BIT_R1/G1/B1` at word bits 0-2; the brightness LUT
+macro is per-channel with no crossing. The decisive argument: **LAT/OE/
+A-E ride bits 6-12 of the same DMA word** — any word-bit→pin remap that
+could transpose G/B would also corrupt blanking and scan, and both are
+proven good (rows decoded exactly in the first report). So `rgb565()`→GPIO
+is provably channel-ordered and the swap is **physical**: the SEENGREAT
+V2.x wiring transposes G↔B on both halves vs. its own silkscreen
+(G1 is really GPIO17, B1 GPIO8). One-place fix: `kPinsV2` is now rig truth
+`{18,17,8,16,15,1,...}`, comment says hardware-proven ≠ silkscreen.
+Confirmed true across resets. T-0.2's "fills render coherently" was true
+and insufficient — coherent ≠ correct; colour-NAME tests are now the
+acceptance criterion for any panel/adapter (AGENTS.md, README, and an
+amendment box in SPIKE_RESULTS T-0.2). `test_rgb565_pack` asserts
+R/G/B/W bit patterns + pack/unpack round-trip so CI catches the packing
+half of this class (the rig half is unfakeable).
+
+**FAULT 2 — garbled splash, repeated two-dot run past ".123.65".** Not an
+out-of-bounds read — the blit's index math is in-bounds by construction and
+`drawPixel` is bounds-checked on top. Two real bugs: (a) the splash canvas
+was sized from the IP line alone (86 px) so the 105 px version line was
+centred at x=-9 and lost both ends; (b) **stale-column smear** — the old
+blit wrote only the clipped canvas rect into a *persistent* DMA framebuffer,
+so during the traverse every panel column past the canvas edge kept the
+previous frame's pixels: frozen period/dot fragments repeating on the
+right. Fix: canvas = max of both lines (107 px), and blit repaints all
+2048 cells every frame, off-canvas reading black through the bounds-checked
+accessor. Class warning recorded at PLAN T-7.3 — the Python's fresh
+`new_frame()` per iteration made this bug unportable; host tests can't see
+it (no persistent framebuffer in the comparison). Confirmed on panel: full
+version line, clean black tails.
+
+## T-2.9 — boot splash (2026-09-16)
+
+Colour card holds 3 s (every boot re-proves the transpose fix), then WiFi,
+then splash: IP 6×12 white + version 5×8 green on the max-width canvas,
+hold→1 px/frame traverse→hold, forever (the Python's behaviour); IP on the
+panel ~2 s after connect. Native 14/14.
+
+## T-2.10 — native live preview (2026-09-16)
+
+Real render-module walk in `env:native`: 272 px strip (outlined text via
+`draw_text_outlined`, `fill_polygon` diamond, `ellipse`, logo-blit colour
+bars, tom-thumb), 64×32 window, half-block ANSI truecolour, 30 fps,
+panel-width black lead-in wrapped like the Phase 7 engine, Ctrl-C quits.
+Gotcha: `pio run -e native -t exec` **strips ANSI escapes** (PlatformIO's
+console wrapper) — run `.pio/build/native/program` directly after
+`pio run -e native`. Verified live: all strip colours present in the
+output, clean loop.
+
+## T-2.11 — phase done (2026-09-16)
+
+Both hardware faults closed on the panel; deferred set (T-0.2 was already
+closed at spike level with the caveat above) empty; purity clean; native
+14/14; esp32s3 + paneltest builds green. Phase 2 complete.

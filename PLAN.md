@@ -445,6 +445,9 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 **T-7.3 — Scroll renderer.** Per frame: advance `scroll_x` by `scroll_speed * dt`, compute the visible window, blit. Port the `src_x0` / `dst_x0` / `visible_w` clipping arithmetic exactly — it handles the wrap case correctly.
 *Accept:* seamless loop with a `panel_w` black lead-in; 4 KB copied per frame, ~120 KB/s at 30 fps.
 
+> ⚠️ **Write every panel cell every frame.** The Python allocates a fresh `new_frame()` each iteration, so unwritten pixels are black by construction. **This firmware blits into a persistent DMA framebuffer** — any cell you skip keeps the previous frame's value. T-2.8 hit this: the splash blit wrote only the clipped canvas rect, and every column past the canvas edge smeared frozen fragments of the last frame during the traverse.
+> Host tests cannot catch it — they compare a freshly-allocated `Canvas16` against Pillow, where the bug does not exist. Blit the full `panel_w × panel_h`, reading off-canvas as black through the bounds-checked accessor. At 2048 cells × 30 fps this is 61 k writes/s — free.
+
 **T-7.4 — Static paging mode.** `compute_pages` from block widths; 5 s dwell per page.
 *Accept:* pages align to card boundaries, never splitting a card.
 
@@ -579,7 +582,7 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 | mbedTLS session, peak | **~53 KB** (W) / **~56 KB** (M) — **untunable until T-9.3** | M |
 | Peak simultaneous mbedTLS + active parse | **73,616 B (71.9 KB)** | M |
 | Consumers vs ceiling | 141–165 KB used, **~97–121 KB headroom** | M |
-| DMA framebuffer, 64×32 | ~30 KB internal | M |
+| DMA framebuffer, 64×32 | **61 KB internal** measured at `begin()` (double-buffered: 32 KB fb + ~29 KB driver task stack/structs) — not the 32 KB projected | M |
 | `esp_partition_mmap()` one-time cost | ~104 B page tables; per-lookup **0 B** | M |
 | PSRAM total use | < 400 KB of 8 MB | P |
 | **Payload and timing** | | |

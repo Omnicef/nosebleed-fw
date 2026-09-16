@@ -55,6 +55,27 @@ static void test_canvas_alloc_strip(void) {
     TEST_ASSERT_NULL(c.px);
 }
 
+// RGB565 bit layout: R=15:11, G=10:5, B=4:0 — exactly what the HUB75
+// driver's color565to888 unpacks. A transposed shift/mask here shows up on
+// hardware as a channel swap (the G/B swap chased at T-2.8). Pure R/G/B/W
+// so the expected words are unambiguous.
+static void test_rgb565_pack(void) {
+    TEST_ASSERT_EQUAL_UINT16(0xF800, rgb565(255, 0, 0));    // RED
+    TEST_ASSERT_EQUAL_UINT16(0x07E0, rgb565(0, 255, 0));    // GREEN
+    TEST_ASSERT_EQUAL_UINT16(0x001F, rgb565(0, 0, 255));    // BLUE
+    TEST_ASSERT_EQUAL_UINT16(0xFFFF, rgb565(255, 255, 255));  // WHITE
+    TEST_ASSERT_EQUAL_UINT16(0x0000, rgb565(0, 0, 0));      // black
+    uint8_t r, g, b;
+    unpack565(rgb565(0, 255, 0), r, g, b);  // pack and unpack must be inverses
+    TEST_ASSERT_EQUAL_UINT8(0, r);
+    TEST_ASSERT_EQUAL_UINT8(255, g);
+    TEST_ASSERT_EQUAL_UINT8(0, b);
+    unpack565(rgb565(0, 0, 255), r, g, b);
+    TEST_ASSERT_EQUAL_UINT8(0, r);
+    TEST_ASSERT_EQUAL_UINT8(0, g);
+    TEST_ASSERT_EQUAL_UINT8(255, b);  // unpack rescales 5-bit (<<3 | >>2): round-trip is faithful
+}
+
 // Fixed-width text width: len * advance, no glyph measurement.
 static void test_text_width(void) {
     TEST_ASSERT_EQUAL_INT(42, text_width(FONT_SPLEEN_6X12, 7));  // "3:30 PM"
@@ -447,6 +468,7 @@ static void test_config_timezone(void) {
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
+    RUN_TEST(test_rgb565_pack);
     RUN_TEST(test_text_width);
     RUN_TEST(test_primitives);
     RUN_TEST(test_font_sheet);

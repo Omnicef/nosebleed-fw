@@ -12,6 +12,7 @@
 #include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "canvas.h"
 #include "config.h"
 #include "store.h"
 #include "timezone.h"
@@ -19,6 +20,120 @@
 // T-4.2 lesson: 3.3 KB Config must never sit on a task stack (loopTask's is
 // 8 KB and the render task's is 8 KB too). One global, the writer owns it.
 static nb::config::Config g_cfg;
+
+// T-2.1: route every Canvas16 through PSRAM. Internal SRAM keeps the DMA
+// framebuffer, the TLS session and task stacks.
+static void* psram_canvas_alloc(size_t n) {
+    return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void psram_canvas_free(void* p) { heap_caps_free(p); }
+
+#ifdef NB_PANEL_TEST
+// T-2.8/T-2.9 — first hardware run of the lib/render -> panel seam
+// (env:paneltest). Init panel, connect WiFi, then hold-scroll-hold-loop the
+// IP + version splash forever. Proves colour order and row mapping —
+// exactly what host tests cannot see.
+#include <WiFi.h>
+#include <cstdio>
+#include <cstring>
+#include "panel.h"
+#include "font_data.h"
+#include "primitives.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#define WIFI_SSID ""
+#define WIFI_PASS ""
+#endif
+
+#ifndef NB_VERSION
+#define NB_VERSION "dev"
+#endif
+
+static void panel_test() {
+    const uint32_t f0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    if (!nb::panel::init(g_cfg.hw)) {
+        Serial.println("panel.begin() FAILED — check adapter PSU / pins");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    const uint32_t f1 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    // T-2.8 accept: DMA framebuffer in INTERNAL SRAM — a drop in the
+    // internal pool proves placement without trusting the allocator flag.
+    Serial.printf("panel begin OK: %dx%d, refresh=%d Hz\n", nb::panel::width(),
+                  nb::panel::height(), nb::panel::refresh_rate());
+    Serial.printf("DMA fb: internal free %lu -> %lu (delta %ld B)\n",
+                  static_cast<unsigned long>(f0),
+                  static_cast<unsigned long>(f1),
+                  static_cast<long>(f1) - static_cast<long>(f0));
+    // Bench-safe clamp: no 5V/4A PSU until the real supply lands
+    // (SPIKE_RESULTS T-0.2). Splash art is sparse, but a scrolling traverse
+    // must not brown out a USB port.
+    const uint8_t br = g_cfg.hw.brightness > 50 ? 50 : g_cfg.hw.brightness;
+
+    // --- FAULT-1 isolation: three words, three colours, all on the panel
+    // at once, static. No timing to miss — just read which word is which
+    // colour. Drawn through the real blit path on a canvas-sized-to-panel.
+    nb::panel::set_brightness(16);  // USB-fed cap (T-0.2)
+    const int pw = nb::panel::width(), ph = nb::panel::height();
+    nb::Canvas16 card = nb::canvas_alloc(static_cast<uint16_t>(pw),
+                                         static_cast<uint16_t>(ph));
+    if (!card.valid()) { Serial.println("canvas alloc FAILED"); for(;;); }
+    struct { const char* word; uint16_t col; } rows[] = {
+        {"RED", nb::rgb565(255, 0, 0)},
+        {"GREEN", nb::rgb565(0, 255, 0)},
+        {"BLUE", nb::rgb565(0, 0, 255)}};
+    for (unsigned i = 0; i < 3; i++) {
+        const int len = static_cast<int>(strlen(rows[i].word));
+        const int x = (pw - len * nb::FONT_SPLEEN_5X8.advance) / 2;
+        const int y = static_cast<int>(i) * (ph / 3);
+        nb::draw_text(card, nb::FONT_SPLEEN_5X8, x, y, rows[i].word, rows[i].col);
+        Serial.printf("drawn \"%s\" in %s at y=%d\n", rows[i].word, rows[i].word, y);
+    }
+    nb::panel::blit(card);
+    Serial.println("static: read which word is which colour (reset to re-show)");
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    nb::panel::set_brightness(br);
+    Serial.printf("brightness restored: cfg=%u applied=%u\n",
+                  static_cast<unsigned>(g_cfg.hw.brightness),
+                  static_cast<unsigned>(br));
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    Serial.print("wifi: connecting");
+    for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
+        Serial.print('.');
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    const String ip = WiFi.status() == WL_CONNECTED
+                          ? WiFi.localIP().toString()
+                          : String("NO WIFI");
+    Serial.printf("wifi: %s\n", ip.c_str());
+
+    // Splash: IP (6x12, white) over version (5x8, green). Canvas sized to
+    // the WIDER of the two lines — sizing on the IP alone clipped the
+    // 105 px version line inside an 86 px canvas (FAULT 2, part one: both
+    // line ends vanished, which read as "garbled").
+    char ver[48];
+    snprintf(ver, sizeof ver, "nosebleed %s", NB_VERSION);
+    const int len_ip = static_cast<int>(strlen(ip.c_str())),
+              len_ver = static_cast<int>(strlen(ver));
+    const int need_ip = len_ip * nb::FONT_SPLEEN_6X12.advance,
+              need_ver = len_ver * nb::FONT_SPLEEN_5X8.advance;
+    int sw = nb::panel::width();
+    if (need_ip + 2 > sw) sw = need_ip + 2;
+    if (need_ver + 2 > sw) sw = need_ver + 2;
+    nb::Canvas16 c = nb::canvas_alloc(static_cast<uint16_t>(sw),
+                                      static_cast<uint16_t>(nb::panel::height()));
+    if (!c.valid()) { Serial.println("canvas alloc FAILED"); for(;;); }
+    nb::draw_text(c, nb::FONT_SPLEEN_6X12, (sw - len_ip * nb::FONT_SPLEEN_6X12.advance) / 2,
+                  16, ip.c_str(), nb::rgb565(255, 255, 255));
+    nb::draw_text(c, nb::FONT_SPLEEN_5X8, (sw - len_ver * nb::FONT_SPLEEN_5X8.advance) / 2,
+                  5, ver, nb::rgb565(0, 255, 0));
+    Serial.printf("splash canvas %dx%d — panel should show IP scrolling now\n", c.w, c.h);
+    nb::panel::splash(c, 1500);  // never returns
+}
+#endif  // NB_PANEL_TEST
 
 #ifdef NB_LOGOS_TEST
 // T-3.4 / T-3.7 — logos-partition mmap test, run standalone (env:logostest)
@@ -307,6 +422,8 @@ void setup() {
   partition_snapshot();
   Serial.println();
 
+  nb::canvas_set_allocator(psram_canvas_alloc, psram_canvas_free);
+
 #ifdef NB_LOGOS_TEST
   logos_test();  // never returns; tasks below are for normal boots only
 #endif
@@ -324,7 +441,11 @@ void setup() {
                      static_cast<unsigned>(g_cfg.hw.brightness));
   Serial.printf("timezone: '%s' -> %s\n", g_cfg.hw.timezone,
                 nb::config::apply_timezone(g_cfg.hw.timezone) == nb::config::TzResult::kApplied
-                    ? "applied" : "UTC fallback");
+                     ? "applied" : "UTC fallback");
+
+#ifdef NB_PANEL_TEST
+  panel_test();  // never returns; tasks below are for normal boots only
+#endif
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.
@@ -337,7 +458,122 @@ void setup() {
 void loop() { vTaskDelay(pdMS_TO_TICKS(10000)); }
 
 #else
-// T-1.1 accept: env:native builds an empty program. Real host tests arrive at
-// T-2.6. This guard is what lets both envs share one main file.
-int main() { return 0; }
+// T-2.10 — native live preview: the scrolling strip rendered through
+// lib/render and painted to the terminal as ANSI 24-bit half-blocks (each
+// cell = 1x2 px, so 64x32 is 64 cols x 16 text rows at roughly panel
+// aspect). Run it as `.pio/build/native/program` after `pio run -e native`
+// — NOT `-t exec`, whose console wrapper strips the escape codes. The
+// RGBMatrixEmulator replacement: no ESP32 simulator can render HUB75
+// (PLAN §4), so this is the unplugged card-design loop. Ctrl-C quits.
+// Real panel verification stays on hardware.
+#include <signal.h>
+#include <sys/time.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <cstring>
+
+#include "canvas.h"
+#include "font_data.h"
+#include "primitives.h"
+
+namespace {
+
+volatile sig_atomic_t g_run = 1;
+void on_signal(int) { g_run = 0; }
+
+double now_s() {
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+    return static_cast<double>(tv.tv_sec) + tv.tv_usec * 1e-6;
+}
+
+// Three placeholder cards in a mega-strip — stand-ins for Phase 6 producers.
+nb::Canvas16 make_strip() {
+    const int W = 272, H = 32;
+    nb::Canvas16 s = nb::canvas_alloc(static_cast<uint16_t>(W),
+                                      static_cast<uint16_t>(H));
+    if (!s.valid()) return s;
+    const uint16_t white = nb::rgb565(255, 255, 255),
+                   green = nb::rgb565(0, 255, 0),
+                   red = nb::rgb565(255, 0, 0),
+                   blue = nb::rgb565(0, 0, 255),
+                   yellow = nb::rgb565(255, 255, 0),
+                   grey = nb::rgb565(64, 64, 64);
+
+    // card 1: outlined title (the T-2.5 path)
+    nb::draw_text_outlined(s, nb::FONT_SPLEEN_6X12, 8, 4, "NOSEBLEED", white, 0);
+    nb::draw_text(s, nb::FONT_SPLEEN_5X8, 8, 21, "PHASE 2", green);
+
+    // card 2: primitives — diamond (fill_polygon) + ellipse ring + bar
+    const nb::Point diamond[4] = {{144, 3}, {164, 15}, {144, 27}, {124, 15}};
+    nb::fill_polygon(s, diamond, 4, red);
+    nb::ellipse(s, 184, 15, 10, 10, green);
+    nb::fill_rect(s, 200, 12, 20, 6, blue);
+
+    // card 3: colour bars + dense tom-thumb text (font legibility check)
+    nb::fill_rect(s, 228, 2, 8, 4, red);
+    nb::fill_rect(s, 237, 2, 8, 4, green);
+    nb::fill_rect(s, 246, 2, 8, 4, blue);
+    nb::fill_rect(s, 255, 2, 8, 4, yellow);
+    nb::draw_text(s, nb::FONT_TOM_THUMB, 228, 12, "live preview", white);
+    nb::draw_text(s, nb::FONT_TOM_THUMB, 228, 20, "30fps host", yellow);
+
+    nb::vline(s, 108, 0, H - 1, grey);  // card gaps
+    nb::vline(s, 220, 0, H - 1, grey);
+    return s;
+}
+
+}  // namespace
+
+int main() {
+    signal(SIGINT, on_signal);
+    signal(SIGTERM, on_signal);
+
+    nb::Canvas16 strip = make_strip();
+    if (!strip.valid()) {
+        std::fprintf(stderr, "strip alloc failed\n");
+        return 1;
+    }
+
+    const int PW = 64, PH = 32;
+    const int period = static_cast<int>(strip.w) + PW;  // black lead-in wrap
+    const double speed = 30.0;                          // px/s, config later
+
+    std::fputs("\x1b[2J\x1b[?25l"
+               "nosebleed native preview (T-2.10) — Ctrl-C quits\n\x1b[H",
+               stdout);
+
+    double scroll = 0.0, t0 = now_s(), last = t0;
+    while (g_run) {
+        const double now = now_s();
+        const double dt = now - last;
+        last = now;
+        scroll += speed * dt;
+        const int w0 = static_cast<int>(scroll) % period - PW;  // window start
+
+        std::fputs("\x1b[H", stdout);
+        char cell[48];
+        for (int y = 0; y < PH; y += 2) {
+            std::fputs("\x1b[K", stdout);
+            for (int x = 0; x < PW; x++) {
+                uint8_t r1, g1, b1, r2, g2, b2;
+                nb::unpack565(strip.get(x + w0, y), r1, g1, b1);
+                nb::unpack565(strip.get(x + w0, y + 1), r2, g2, b2);
+                std::snprintf(cell, sizeof cell,
+                              "\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm\xe2\x96\x80",
+                              r1, g1, b1, r2, g2, b2);
+                std::fputs(cell, stdout);
+            }
+            std::fputs("\x1b[0m\n", stdout);
+        }
+        std::fflush(stdout);
+        const double frame = 1.0 / 30.0;
+        const double spent = now_s() - now;
+        if (spent < frame) usleep(static_cast<useconds_t>((frame - spent) * 1e6));
+    }
+    std::fputs("\x1b[0m\x1b[?25h\n", stdout);
+    nb::canvas_free(strip);
+    return 0;
+}
 #endif
