@@ -32,20 +32,24 @@ SpiRamAllocator g_psram_alloc;
 
 JsonDocument make_psram_doc() { return JsonDocument(&g_psram_alloc); }
 
-bool scoreboard_url(char* url, size_t cap, const char* slug) {
-    const int n = snprintf(url, cap,
-                           "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard",
-                           slug);
+bool scoreboard_url(char* url, size_t cap, const char* slug, const char* dates) {
+    const int n = dates
+        ? snprintf(url, cap,
+                   "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard?dates=%s",
+                   slug, dates)
+        : snprintf(url, cap,
+                   "https://site.api.espn.com/apis/site/v2/sports/%s/scoreboard", slug);
     return n > 0 && (size_t)n < cap;
 }
 
-bool espn_fetch_scoreboard(const char* url, JsonDocument& doc) {
+bool espn_fetch_scoreboard(const char* url, JsonDocument& doc, size_t* wire) {
     JsonDocument filter(&g_psram_alloc);
     build_scoreboard_filter(filter);
     DeserializationError err;  // never read unless the lambda ran (http_get ok==false otherwise)
     const bool ok = http_get(url, [&](HttpStream& s) {
         ReadBufferingStream rs(s, 512);
         err = parse_scoreboard(rs, filter, doc);
+        if (wire) *wire = s.bytes();  // self-counting stream (ESPN replies chunked)
         return err == DeserializationError::Ok && !doc.overflowed();
     });
     return ok;

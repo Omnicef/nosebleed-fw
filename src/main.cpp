@@ -351,8 +351,12 @@ static void config_boot_check() {
 // cleanup run on every path including mid-body failure, so the post-call
 // delta must be ~0 — that is the "never leaks a session" measurement.
 #include <WiFi.h>
+#include <cstdlib>
+#include <StreamUtils.h>
 #include "http.h"
 #include "espn.h"
+#include "espn_json.h"
+#include "date_window.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -473,6 +477,100 @@ static void http_test() {
                 Serial.println("    FAIL: parse internal delta > 2 KB — filter/allocator wrong");
             }
         }
+    }
+
+    // 4. T-5.6 (REQUIRED mitigation) — single local day via ?dates=.
+    // Baseline: 6,081 ms / full window unmitigated. Measure over runs;
+    // wire time is network-weather (T-5.3/5.4 both saw multi-fold swings).
+    {
+        char url[192], dates[16];
+        setenv("TZ", "America/New_York", 1);  // config default; boot path does this via T-4.6
+        tzset();
+        const time_t now = time(nullptr);  // SNTP was synced for phase 2
+        if (!nb::data::local_day(dates, sizeof dates, now)) ++fails;
+        if (!nb::data::scoreboard_url(url, sizeof url, "baseball/mlb", dates)) ++fails;
+        Serial.printf("  window: dates=%s tz=%s\n", dates, getenv("TZ") ? getenv("TZ") : "(unset)");
+        for (int i = 1; i <= 3; ++i) {
+            auto doc = nb::data::make_psram_doc();
+            size_t wire = 0;
+            const uint32_t t0 = millis();
+            const bool ok = nb::data::espn_fetch_scoreboard(url, doc, &wire);
+            Serial.printf("  run%d: ok=%d wire=%u B events=%u kept=%u B elapsed=%lu ms\n", i, ok,
+                          static_cast<unsigned>(wire),
+                          ok ? static_cast<unsigned>(doc["events"].size()) : 0u,
+                          ok ? static_cast<unsigned>(measureJson(doc)) : 0u,
+                          static_cast<unsigned long>(millis() - t0));
+            if (!ok) ++fails;
+            if (i < 3) vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+    }
+
+    // 5. T-5.6 diagnostic — wire is only ~1.4 s of the ~8 s run (phase 2
+    // moves the same-size NFL body in 1.35 s); parse owns the rest. Re-parse
+    // ONE captured body from PSRAM memory with filter/doc in either heap to
+    // find which allocation is slow. Throwaway; not the shipping path.
+    {
+        static constexpr size_t kBodyCap = 600u * 1024u;
+        char* body = static_cast<char*>(heap_caps_malloc(kBodyCap, MALLOC_CAP_SPIRAM));
+        char url[192], dates[16];
+        nb::data::local_day(dates, sizeof dates, time(nullptr));
+        if (!nb::data::scoreboard_url(url, sizeof url, "baseball/mlb", dates)) ++fails;
+        size_t got = 0;
+        const uint32_t tw0 = millis();
+        const bool fetched =
+            body && nb::data::http_get(url, [&](nb::data::HttpStream& s) {
+                char buf[1024];
+                for (;;) {
+                    const size_t r = s.readBytes(buf, sizeof buf);
+                    if (r == 0) break;
+                    if (got + r > kBodyCap) return false;
+                    memcpy(body + got, buf, r);
+                    got += r;
+                }
+                return got > 1000;
+            });
+        Serial.printf("  parse-diag: fetched=%d body=%u B wire=%lu ms\n", fetched,
+                      static_cast<unsigned>(got), static_cast<unsigned long>(millis() - tw0));
+        if (fetched) {
+            JsonDocument filt_int;
+            nb::data::build_scoreboard_filter(filt_int);
+            auto filt_psram = nb::data::make_psram_doc();
+            nb::data::build_scoreboard_filter(filt_psram);
+            for (int v = 0; v < 4; ++v) {
+                // v0 = shipping combo (psram filter + psram doc); v3 = raw
+                // parse, no filter, tokenizer baseline.
+                const bool psram_filter = (v == 0 || v == 2);
+                const bool psram_doc = (v == 0 || v == 1);
+                auto parse_once = [&]() {
+                    JsonDocument doc = psram_doc ? nb::data::make_psram_doc() : JsonDocument();
+                    JsonDocument& f = psram_filter ? filt_psram : filt_int;
+                    struct MemView {  // reader duck-type: size_t readBytes(char*, size_t)
+                        const char* p;
+                        size_t n, i = 0;
+                        int read() { return i < n ? (uint8_t)p[i++] : -1; }
+                        size_t readBytes(char* b, size_t m) {
+                            const size_t k = (n - i < m) ? n - i : m;
+                            memcpy(b, p + i, k);
+                            i += k;
+                            return k;
+                        }
+                    } mv{body, got};
+                    const uint32_t f0 = http_int_free(), t0 = micros();
+                    const DeserializationError err =
+                        (v == 3) ? deserializeJson(doc, mv, DeserializationOption::NestingLimit(20))
+                                 : nb::data::parse_scoreboard(mv, f, doc);
+                    const uint32_t dt = (micros() - t0) / 1000u;
+                    const int32_t d = static_cast<int32_t>(f0 - http_int_free());
+                    Serial.printf("    filt=%-5s doc=%-8s: err=%d %lu ms internal_delta=%ld B\n",
+                                  (v == 3) ? "none" : (psram_filter ? "psram" : "internal"),
+                                  psram_doc ? "psram" : "internal", static_cast<int>(bool(err)),
+                                  static_cast<unsigned long>(dt), static_cast<long>(d));
+                };
+                parse_once();  // warm cache
+                parse_once();  // measured pass
+            }
+        }
+        heap_caps_free(body);
     }
 
     Serial.printf("  RESULT: %s\n", fails ? "FAIL" : "PASS");

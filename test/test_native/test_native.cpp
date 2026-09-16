@@ -19,6 +19,7 @@
 
 #include "canvas.h"
 #include "cache.h"
+#include "date_window.h"
 #include "espn_json.h"
 #include "config.h"
 #include "game.h"
@@ -789,6 +790,51 @@ static void test_data_norm_golden(void) {
     }
 }
 
+// T-5.6 — port of the Python's _filter_by_date + the ?dates= day string.
+static time_t utc(int y, int mo, int d, int h, int mi) {
+    struct tm t = {};
+    t.tm_year = y - 1900; t.tm_mon = mo - 1; t.tm_mday = d; t.tm_hour = h; t.tm_min = mi;
+    return timegm(&t);
+}
+
+static void test_data_date_window(void) {
+    using namespace nb::data;
+    setenv("TZ", "America/New_York", 1);
+    tzset();
+
+    // 2026-06-15T03:00Z = 23:00 EDT Jun 14 -> local today 20260614
+    const time_t now = utc(2026, 6, 15, 3, 0);
+    char day[16];
+    TEST_ASSERT_TRUE(local_day(day, sizeof day, now));
+    TEST_ASSERT_EQUAL_STRING("20260614", day);
+
+    static GameList list;
+    memset(&list, 0, sizeof list);
+    list.count = 5;
+    list.games[0].start_utc = utc(2026, 6, 14, 16, 15);  // today 16:15 EDT — keep
+    list.games[1].start_utc = utc(2026, 6, 13, 23, 30);  // yesterday        — keep
+    list.games[2].start_utc = utc(2026, 6, 12, 23, 0);   // two days ago     — drop
+    list.games[3].start_utc = utc(2026, 6, 16, 2, 0);    // = Jun 15 22:00 EDT — drop
+    list.games[4].start_utc = 0;                          // date-unparseable — keep
+    for (int i = 0; i < 5; ++i) std::snprintf(list.games[i].id, 16, "%d", i);
+
+    TEST_ASSERT_EQUAL_INT(3, filter_yesterday_today(&list, now));
+    TEST_ASSERT_EQUAL_STRING("0", list.games[0].id);
+    TEST_ASSERT_EQUAL_STRING("1", list.games[1].id);
+    TEST_ASSERT_EQUAL_STRING("4", list.games[2].id);
+
+    // DST edge: 2026-03-09T06:30Z = 01:30 EDT Mar 9; the night before was the
+    // spring-forward. Yesterday is still Mar 8 even though it was 23 h long.
+    const time_t dst_now = utc(2026, 3, 9, 6, 30);
+    TEST_ASSERT_TRUE(local_day(day, sizeof day, dst_now));
+    TEST_ASSERT_EQUAL_STRING("20260309", day);
+    list.count = 2;
+    list.games[0].start_utc = utc(2026, 3, 8, 18, 0);  // Mar 8 afternoon EDT — keep
+    list.games[1].start_utc = utc(2026, 3, 6, 18, 0);  // Mar 6 — drop
+    TEST_ASSERT_EQUAL_INT(1, filter_yesterday_today(&list, dst_now));
+    TEST_ASSERT_EQUAL_STRING("0", list.games[0].id);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -810,5 +856,6 @@ int main(void) {
     RUN_TEST(test_data_cache_stress);
     RUN_TEST(test_data_filter_mlb);
     RUN_TEST(test_data_norm_golden);
+    RUN_TEST(test_data_date_window);
     return UNITY_END();
 }

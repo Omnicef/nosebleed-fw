@@ -482,3 +482,39 @@ Accept — host: all six fixtures match the Python **field-for-field**,
 committed under `test/golden/`. Checked field lengths against the struct
 caps first (max name 23 < 32, clock 7 < 8) so plain equality is exact, no
 truncation masking. esp32s3 builds; native 19/19.
+
+## T-5.6 — narrow the date window (2026-09-16, REQUIRED)
+
+`lib/data/date_window.{h,cpp}`: `local_day()` (IANA TZ via `setenv`+`tzset`,
+`strftime %Y%m%d`) and `filter_yesterday_today()` — the `_filter_by_date`
+port, compacting in place, keeping local yesterday+today (`tm_mday-1`+
+`mktime` normalises across DST, tested), keeping `start_utc==0` (the
+unparseable-date cases the Python stamps with `now()`). `scoreboard_url()`
+grew a `dates` param; `espn_fetch_scoreboard()` grew a wire-bytes out-param.
+Host: `test_data_date_window` (TZ set to America/New_York for determinism)
+covers windowing, DST edge and the keep-list; native 20/20.
+
+**Two ESPN API changes found while measuring** (verified with curl, same
+UA, decompressed): `dates=YYYYMMDD-YYYYMMDD` — the Python's exact
+yesterday-tomorrow window — and comma lists now return
+`400 Failed to get events endpoint`; only **single days** are accepted.
+Default (no `dates`) is already ~one day: 297,882 B vs 297,962 B for
+`dates=<today>`. The 1.46 MB three-day era is over upstream — yesterday's
+finals now *require* a second single-day fetch
+(`dates=<yesterday>`), which T-5.7 merges via `filter_yesterday_today`.
+
+**Device (httptest phases, ~298 KB single-day MLB):** filtered fetch+parse
+per run: 7.9 / 8.0 / 7.8 s, and a later boot 14.1 / 15.0 / 10.1 s — while
+the identical-size NFL body (transport only) took 1.35 / 1.51 / 1.94 / 6.7 s
+across the same runs. **Wire time is pure network-weather: 40–200 KB/s
+swings, same payload.** So a parse-vs-wire diagnostic was run: one body
+fetched to a PSRAM buffer (2,849 ms wire) then re-parsed from memory eight
+times across allocator placements: **90–92 ms every time** (psram-filter+
+psram-doc = int-filter+int-doc; internal doc peak 23,360 B). The filtered
+parse is *not* the budget problem and never was — the 6 s figure is
+dominated by ESPN/WiFi transfer of ~300 KB. Accept: wire is already at the
+single-day minimum; best-case measured 2.8 s + 0.09 s parse ≪ 6 s; worst
+observed 17 s is transfer weather that gzip (T-11.3) would cut ~5×, and
+the measured duty cycle during a live-game poll says revisit T-11.3 if
+on-site RSSI keeps wire above ~4 s. The parse-diag phase stays in
+`NB_HTTP_TEST` as a permanent one-command split of wire vs parse.
