@@ -63,7 +63,7 @@ Filtering solves the memory problem (~4.5 KB retained from 1.46 MB) but **not** 
 ```
 logos.bin
 ├── header    magic "NBLG", version u16, count u16, logo_height u16, reserved
-├── index[]   { league[8], abbr[4], offset u32, w u8, h u8 }   ~20 B each
+├── index[]   { league[8], abbr[4], offset u32, w u8, h u8 }   22 B each (measured — see below)
 └── blobs     RGB565 pixels (w*h*2 B) + 1-bit alpha mask (w*h/8 B)
 ```
 
@@ -79,6 +79,10 @@ resize-to-height the width is usually under 32.
 Comfortably inside the 2 MB `logos` partition either way.
 
 Mapped with `esp_partition_mmap()` and read directly — no decode, no RAM copy, no warm/cold cache distinction. Flash reads go through the cache, so a miss costs a real SPI read: **keep logo access in strip rebuilds, never in the per-frame path.**
+
+> **Index stride is 22 B, not ~20.** The fields sum to 18 B but the struct pads to 22. T-3.4 hit this: an assumed stride desynced **20 lookups** — silently returning the wrong logo, not erroring. Never compute this stride by hand; take it from `sizeof()` on both the writer and reader side and assert they agree.
+> **Heap cost: lookups are free, the mapping is not.** Measured at T-3.4 — per-lookup heap delta is **0 B in, 0 B out**, exactly as the architecture assumes. The one-time `esp_partition_mmap()` call itself costs **~104 B** of page-table overhead. Budget it once at init; it is not a per-access cost.
+> **The atlas drifts.** At T-3.3, 46 of 47 keys shared with the Marquee corpus encoded byte-identical; `mlb:ATH` differed because ESPN changed the artwork upstream. Expect this — it is the reason T-9.5 makes `logos.bin` separately OTA-able.
 
 ---
 
