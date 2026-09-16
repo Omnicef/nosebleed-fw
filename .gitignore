@@ -36,3 +36,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# ESPN raw-logo cache + generated atlas (rebuild with tools/build_logos.py --fetch)
+assets/logos/

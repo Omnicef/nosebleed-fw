@@ -27,8 +27,13 @@ upper-cased and must fit in 4 bytes. The two fields together are the lookup key
 from __future__ import annotations
 
 import argparse
+import io
+import json
 import struct
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from PIL import Image, ImageEnhance, ImageFilter
@@ -145,20 +150,158 @@ def parse_name(stem: str) -> tuple[str, str]:
     return league, abbr
 
 
+# --------------------------------------------------------------------------
+# ESPN fetch (T-3.3). Be a good API citizen: /teams once per league, 0.4 s
+# between logo downloads (never a burst), raw originals cached so a re-run
+# does no network I/O, and fail-fast after repeated failures instead of
+# hammering the CDN. UA facts from SPIKE_RESULTS: ESPN's CDN allows
+# python-requests/* and rejects Mozilla/Chrome UAs with 403.
+# --------------------------------------------------------------------------
+
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+ESPN_PATHS = {  # internal league slug -> ESPN path (matches Marquee LEAGUE_SLUGS)
+    "nfl": "football/nfl",
+    "nba": "basketball/nba",
+    "mlb": "baseball/mlb",
+    "nhl": "hockey/nhl",
+    "epl": "soccer/eng.1",
+}
+UA = {"User-Agent": "python-requests/2.31"}
+PRO_LEAGUES = ["nfl", "nba", "mlb", "nhl", "epl"]
+SKIP_LOGO_RELS = {"wordmark", "scoreboard"}
+MAX_FETCH_FAILURES = 5  # abort the whole run instead of retrying hard
+
+
+def http_get(url: str, tries: int = 3) -> bytes:
+    last: Exception | None = None
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(url, headers=UA), timeout=15) as r:
+                return r.read()
+        except Exception as exc:  # URLError, HTTPError, timeout
+            last = exc
+            if attempt < tries - 1:
+                time.sleep(0.5 * (2 ** attempt))  # 0.5 s, 1.0 s
+    raise RuntimeError(f"GET {url}: {last}")
+
+
+def pick_squarest_logo(logos: list[dict]) -> str:
+    """Aspect-ratio-closest-to-1:1 variant, skipping wordmark/scoreboard.
+    Port of Marquee espn_client._pick_squarest_logo."""
+    cands = [l for l in logos if not (SKIP_LOGO_RELS & set(l.get("rel", [])))] or logos
+
+    def aspect(logo: dict) -> float:
+        w, h = logo.get("width", 0), logo.get("height", 0)
+        return max(w, h) / min(w, h) if w and h else float("inf")
+
+    return min(cands, key=aspect).get("href", "")
+
+
+def fetch_teams(league: str, cache_dir: Path) -> list[dict]:
+    """[{abbr, color, url}] for one league; teams JSON cached to disk."""
+    cache = cache_dir / f"teams_{league}.json"
+    if not cache.exists():
+        cache.write_bytes(http_get(f"{ESPN_BASE}/{ESPN_PATHS[league]}/teams"))
+    raw = json.loads(cache.read_bytes())
+    out = []
+    for entry in raw["sports"][0]["leagues"][0]["teams"]:
+        t = entry["team"]
+        out.append({"abbr": t["abbreviation"].upper(),
+                    "color": t.get("color", "ffffff"),
+                    "url": pick_squarest_logo(t.get("logos", []))})
+    return out
+
+
+def fetch_all(leagues: list[str], cache_dir: Path, delay: float) -> int:
+    """Download raw originals to cache_dir + a colors.json side table.
+    Returns failure count. Caches make re-runs free."""
+    failures = 0
+    colors: dict[str, str] = {}
+    color_file = cache_dir / "colors.json"
+    if color_file.exists():
+        colors = json.loads(color_file.read_text())
+    for league in leagues:
+        teams = fetch_teams(league, cache_dir)
+        print(f"{league}: {len(teams)} teams")
+        for t in teams:
+            dest = cache_dir / f"{league}_{t['abbr'].lower()}.png"
+            colors[f"{league}:{t['abbr']}"] = t["color"]
+            if not dest.exists():
+                try:
+                    data = http_get(t["url"])
+                    Image.open(io.BytesIO(data)).verify()  # reject HTML error pages
+                    dest.write_bytes(data)
+                except Exception as exc:
+                    print(f"  FAIL {league}:{t['abbr']}: {exc}", file=sys.stderr)
+                    failures += 1
+                    if failures >= MAX_FETCH_FAILURES:
+                        color_file.write_text(json.dumps(colors, sort_keys=True))
+                        print(f"aborting: {failures} failures (fail-fast)",
+                              file=sys.stderr)
+                        return failures
+                    time.sleep(1.0)  # one bad logo deserves a breather
+                    continue
+                time.sleep(delay)
+        color_file.write_text(json.dumps(colors, sort_keys=True))
+    return failures
+
+
+def spotcheck(cache_dir: Path, marquee_dir: Path, height: int) -> int:
+    """Same raw bytes in => byte-identical atlas entries out. A key whose raw
+    bytes differ from the corpus is an upstream rebrand (ESPN changed the
+    artwork since the corpus was cached) — reported, not an error."""
+    ref_table, _ = read(build(load_logo_dir(marquee_dir, height), height))
+    identical = changed = 0
+    for key, rec in ref_table.items():
+        stem = f"{key[0]}_{key[1].lower()}"
+        mine, theirs = cache_dir / f"{stem}.png", marquee_dir / f"{stem}.png"
+        if not mine.exists():
+            continue
+        if mine.read_bytes() != theirs.read_bytes():
+            print(f"  source change: {key[0]}:{key[1]} (ESPN artwork != corpus)")
+            changed += 1
+            continue
+        w, h, blob = encode_blob(process(Image.open(mine).convert("RGBA"), height))
+        assert (w, h, blob) == (rec["w"], rec["h"], rec["blob"]), \
+            f"{key}: atlas differs from Marquee-corpus render of identical source"
+        identical += 1
+    print(f"spot-check OK: {identical} shared keys byte-identical, "
+          f"{changed} upstream artwork changes (expected: rebrands)")
+    return identical
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("logo_dir", type=Path, help="dir of <league>_<abbr>.png files")
+    ap.add_argument("logo_dir", nargs="?", type=Path, default=Path("assets/logos"),
+                    help="dir of <league>_<abbr>.png raw originals (also the fetch cache)")
     ap.add_argument("-H", "--height", type=int, default=32)
     ap.add_argument("-o", "--out", type=Path, default=Path("logos.bin"))
+    ap.add_argument("--fetch", action="store_true",
+                    help="fetch teams + raw logos from ESPN first (cached)")
+    ap.add_argument("--league", action="append", choices=PRO_LEAGUES,
+                    help="league to fetch (repeatable); default all five")
+    ap.add_argument("--delay", type=float, default=0.4,
+                    help="seconds between logo downloads")
+    ap.add_argument("--spotcheck", type=Path, default=None, metavar="MARQUEE_LOGO_DIR",
+                    help="byte-compare shared keys against a reference logo dir")
     args = ap.parse_args(argv)
+
+    if args.fetch:
+        if fetch_all(args.league or PRO_LEAGUES, args.logo_dir, args.delay):
+            return 1
 
     entries = load_logo_dir(args.logo_dir, args.height)
     if not entries:
         print(f"no <league>_<abbr>.png files in {args.logo_dir}", file=sys.stderr)
         return 1
-    args.out.write_bytes(build(entries, args.height))
+    data = build(entries, args.height)
+    args.out.write_bytes(data)
     print(f"logos.bin: {len(entries)} logos, height {args.height}, "
           f"{args.out.stat().st_size} B")
+
+    if args.spotcheck:
+        spotcheck(args.logo_dir, args.spotcheck, args.height)
     return 0
 
 
