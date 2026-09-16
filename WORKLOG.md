@@ -53,3 +53,56 @@ initializer into the comment. Every glyph after code 92 shifted up by one — so
 backslash in the comment (`disp = "bs"`). This would have shipped a silently
 corrupted font to the real firmware; the T-2.7 parity gate earned its keep.
 
+## Phase 3 logo pipeline — T-3.1 / T-3.2 (host-only, 2026-09-15)
+
+`tools/build_logos.py` — ports the processing half of Marquee's
+`logo_pipeline.py` (`_process`, verbatim) and serialises the PLAN §3 `logos.bin`
+format (12 B header + sorted 20 B index + RGB565/1-bit-mask blobs). Pure host
+Python; no device code, no fetching. **Stopped here** — T-3.3 (144-team ESPN
+fetch), T-3.4 (mmap reader) and the rest await hardware/direction.
+
+Validated against the 50 real cached logos in
+`Marquee/marquee/assets/logos` (`tools/test_build_logos.py`, run directly):
+
+- **T-3.1 parity** — runs Marquee's *real* `_process` (only `httpx`/`models`
+  imports stubbed) and diffs it pixel-for-pixel against our port on a 7-logo
+  sample incl. the collision pair. Identical.
+- **T-3.2 round-trip** — build → read: 50 keys, every decoded blob == a fresh
+  encode, offsets ascending and gap-free from `HEADER + 50*ENTRY_SIZE`. Atlas
+  for the 50-logo corpus is 89,888 B (~1.8 KB/logo at height 32, matches §3).
+- **Collision keying** — `eng.1` and `epl` are duplicate Premier League slugs
+  sharing club abbreviations: 50 `league+abbr` keys vs 39 bare-abbr. A bare-abbr
+  index would silently drop 11 logos; the `(league, abbr)` key keeps both
+  `eng.1:liv` and `epl:liv` as distinct, bisect-resolvable rows. (Their cached
+  artwork is identical, so the key defends the *index entry*, not the pixels.)
+
+### Font fix hardened
+
+The Phase 2 backslash fix was specific (`disp = "bs"`). Generalised to
+alnum-only labels (space→`sp`, other punctuation→`?`) so the whole
+backslash-in-comment class can't recur, not just glyph 92. Regenerated
+`font_data.h`; `pio test -e native` still **0 px**.
+
+### Generated-C escaping discipline (audit of every emitter)
+
+Both generators — `build_fonts.py`, `gen_parity_golden.py` — emit **only `//`
+line comments**, never `/* */` and never interpolate into C string literals.
+The full inventory of interpolated content is:
+
+| Emitter | Interpolated into generated C | Hazard |
+|---|---|---|
+| `build_fonts` glyph line | `{code}` (int), `{disp}` (label), numeric byte array | `disp` was the sole hazard (glyph 92 `\`); now alnum-only |
+| `build_fonts` font/array decl | ints and `ident.upper()` (alnum idents) | none |
+| `gen_parity_golden` grid line | numeric `0x%04X` only | none |
+| `gen_parity_golden` banner | `{time_str}`, `{date_str}` in a `//` line — `%H:%M AM/PM`, `%a %m/%d` | none (never a backslash) |
+
+**Rules for any future generator** (esp. logo/zone-name tables that embed
+arbitrary text):
+- A backslash at **end of a `//` comment line is a line-continuation** — it
+  eats the next line. This is the bug that shipped a corrupted font table.
+- Inside a C **string literal** `"…"`, escape `\` and `"`; a trailing `\` there
+  too swallows the closing quote.
+- Inside a **block comment** `/* … */`, guard against a `*/` sequence in data.
+- Preferred and cheap: emit **numeric-only** (byte/int arrays, hex), so data
+  can never carry C syntax. Do this whenever the value isn't human-meaningful.
+- When a label must be human-readable, restrict to `[A-Za-z0-9_]`.
