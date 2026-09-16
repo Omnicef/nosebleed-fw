@@ -8,6 +8,10 @@ Project guidance for AI coding agents. Read this at the start of every session. 
 
 **Nosebleed** is an LED-matrix sports ticker: live scores plus rotating info widgets (clock, weather, news/stocks/crypto), configured from a browser. *Worst seat in the house. Best view of the score.* `nosebleed-fw` is the **ESP32-S3 firmware rewrite** of `Marquee`, the original Raspberry Pi Python implementation.
 
+> **On `Marquee`.** Nosebleed is a rewrite of a working Raspberry Pi implementation in Python, referred to throughout as *Marquee* or *"the Python"*. **That repo is private and not publicly available** — it is a design reference for the author and for agents working in this repo, not a dependency. Nothing here requires it: the ported card layouts, fonts and test fixtures are all committed. References to it are historical provenance, and can be read as "this decision came from a working prior implementation".
+>
+> Agents with local access: set `$MARQUEE_REPO` to its checkout path. It is **READ-ONLY**.
+
 The Python project (`Marquee`, Phase 5 complete) is the **design reference**. Its `PLAN.md`, `CARD_DESIGN_SPEC.md`, `docs/API_NOTES.md`, `tests/fixtures/*.json` and BDF fonts are the source of truth for *what to build*. None of its code is being ported line-by-line — Pillow, FastAPI, SQLite and the hzeller driver have no equivalents here.
 
 Build it by following the phased plan in `PLAN.md` — **do not jump ahead**; each phase de-risks the next. Phase 0 is a go/no-go gate.
@@ -57,7 +61,7 @@ If the header is not present, **stop and say so** rather than guessing. Do not i
 - **One TLS session at a time.** Stagger league polls. Concurrent sessions blow the internal-RAM budget.
 - **Degrade gracefully.** Missing ESPN fields (especially `situation`) hide that element rather than erroring. Network down = last-good data plus a small offline indicator, never a blank panel. Missing logo = team abbreviation in team colour.
 - **Config only in NVS.** Scores, caches and runtime status stay in RAM, never persisted. (Same rule as the Pi original — flash wear replaces SD-card corruption as the reason.)
-- **The Marquee Python repo (`/home/anthony/VSCode/Marquee`) is READ-ONLY.** It is the design reference — `PLAN.md`, `CARD_DESIGN_SPEC.md`, `docs/API_NOTES.md`, the BDF fonts and the ESPN fixtures. Never write to it, not even a small fix or a backport. Changes there are a separate decision in a separate session.
+- **The Marquee Python repo (`$MARQUEE_REPO`) is READ-ONLY.** It is the design reference — `PLAN.md`, `CARD_DESIGN_SPEC.md`, `docs/API_NOTES.md`, the BDF fonts and the ESPN fixtures. Never write to it, not even a small fix or a backport. Changes there are a separate decision in a separate session.
 - **Never read an ESPN fixture whole.** `tests/fixtures/mlb_scoreboard.json` is **1.4 MB — roughly 400k tokens**. One `cat` ends the session. Sample the specific fields you need with `jq` or a Python one-liner. The fixtures are a test corpus for compiled code, not reading material. Same rule at T-5.8.
 - **Be a good API citizen.** Cache aggressively, jittered exponential backoff on errors, live games 15–30 s, everything else far slower. No API key for ESPN — don't add one.
 

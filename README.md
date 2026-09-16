@@ -50,9 +50,17 @@ Most of the code — every widget, all layout, the scroll engine — compiles an
 - [`SPIKE_RESULTS.md`](SPIKE_RESULTS.md) — Phase 0 measurements on hardware, and the gate verdict
 - [`WORKLOG.md`](WORKLOG.md) — running notes, one entry per task
 
-## Prior art
+## Why not a Raspberry Pi?
 
-Nosebleed is a rewrite of **Marquee**, a Raspberry Pi implementation in Python. The Pi version works; this one exists for sub-second boot, no SD card to corrupt, ~2 W instead of ~7 W, and a $10 BOM.
+This started life as a working Raspberry Pi implementation in Python — Pillow for rendering, FastAPI for the web UI, the hzeller driver for the panel. It worked well, and the card designs here are ported from it.
+
+The microcontroller version exists because a Pi is the wrong shape for an appliance that lives on a shelf:
+
+- **Boot time.** Under a second, against roughly thirty. That's the difference between something you power-cycle at the wall and something you have to think about.
+- **No SD card.** Config lives in NVS with wear levelling. The Pi version carries a whole apparatus of WAL mode, JSON snapshots and corruption recovery, written entirely to survive a failure mode that doesn't exist here.
+- **Power.** ~2 W against ~7 W, and no filesystem to corrupt on an unclean shutdown.
+- **Cost.** ~$10 of silicon rather than ~$50 of single-board computer, SD card and PSU.
+- **No OS to fight.** No `systemd`, no `apt`, no disabling onboard audio so the LED driver can have its DMA channel back.
 
 ## A note on data sources
 

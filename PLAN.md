@@ -4,6 +4,10 @@ ESP32-S3 firmware rewrite of the `Marquee` Python project. Phased build plan wit
 
 **Read `AGENTS.md` first.** It carries the hard rules, memory budget and task topology that every phase below assumes.
 
+> **On `Marquee`.** Nosebleed is a rewrite of a working Raspberry Pi implementation in Python, referred to throughout as *Marquee* or *"the Python"*. **That repo is private and not publicly available** — it is a design reference for the author and for agents working in this repo, not a dependency. Nothing here requires it: the ported card layouts, fonts and test fixtures are all committed. References to it are historical provenance, and can be read as "this decision came from a working prior implementation".
+>
+> Agents with local access: set `$MARQUEE_REPO` to its checkout path. It is **READ-ONLY**.
+
 **Reference repo:** the Python `Marquee` project at `bcccc4f` (Phase 5 complete). Referred to throughout as *"the Python."* Its `PLAN.md`, `CARD_DESIGN_SPEC.md`, `docs/API_NOTES.md`, `tests/fixtures/` and `marquee/matrix/fonts/*.bdf` are inputs to this build.
 
 **Rule:** do phases in order. Each de-risks the next. Phase 0 is a gate — if it fails, the project stops.

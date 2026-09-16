@@ -98,7 +98,7 @@ work started.**
   positives** (`Arduino.h` not found etc.). `pio run` is the truth.
 - **API verification rule** held all session: every `esp_http_client` call
   was checked against
-  `/home/anthony/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_http_client/include/esp_http_client.h`
+  `~/.platformio/packages/framework-arduinoespressif32-libs/esp32s3/include/esp_http_client/include/esp_http_client.h`
   before use (`fetch_headers` :643, `get_errno` :551, `set_header` :416,
   `cfg.user_agent` :194).
 
