@@ -1,0 +1,25 @@
+[
+ {
+  "away": {
+   "abbr": "NY",
+   "colour": "1d428a",
+   "id": "18",
+   "name": "New York Knicks"
+  },
+  "away_score": 94,
+  "clock": "0.0",
+  "home": {
+   "abbr": "SA",
+   "colour": "000000",
+   "id": "24",
+   "name": "San Antonio Spurs"
+  },
+  "home_score": 90,
+  "id": "401859967",
+  "period": 4,
+  "situation": null,
+  "start_utc": 1781397000,
+  "status": "post",
+  "status_display": "Final"
+ }
+]

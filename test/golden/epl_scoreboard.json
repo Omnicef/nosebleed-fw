@@ -1,0 +1,232 @@
+[
+ {
+  "away": {
+   "abbr": "MAN",
+   "colour": "da020e",
+   "id": "360",
+   "name": "Manchester United"
+  },
+  "away_score": 3,
+  "clock": "90'+6'",
+  "home": {
+   "abbr": "BHA",
+   "colour": "0606fa",
+   "id": "331",
+   "name": "Brighton & Hove Albion"
+  },
+  "home_score": 0,
+  "id": "740966",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "WOL",
+   "colour": "fdb913",
+   "id": "380",
+   "name": "Wolverhampton Wanderers"
+  },
+  "away_score": 1,
+  "clock": "90'+8'",
+  "home": {
+   "abbr": "BUR",
+   "colour": "6C1D45",
+   "id": "379",
+   "name": "Burnley"
+  },
+  "home_score": 1,
+  "id": "740967",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "ARS",
+   "colour": "e20520",
+   "id": "359",
+   "name": "Arsenal"
+  },
+  "away_score": 2,
+  "clock": "90'+9'",
+  "home": {
+   "abbr": "CRY",
+   "colour": "0202fb",
+   "id": "384",
+   "name": "Crystal Palace"
+  },
+  "home_score": 1,
+  "id": "740968",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "NEW",
+   "colour": "000000",
+   "id": "361",
+   "name": "Newcastle United"
+  },
+  "away_score": 0,
+  "clock": "90'+9'",
+  "home": {
+   "abbr": "FUL",
+   "colour": "ffffff",
+   "id": "370",
+   "name": "Fulham"
+  },
+  "home_score": 2,
+  "id": "740969",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "BRE",
+   "colour": "f42727",
+   "id": "337",
+   "name": "Brentford"
+  },
+  "away_score": 1,
+  "clock": "90'+11'",
+  "home": {
+   "abbr": "LIV",
+   "colour": "d11317",
+   "id": "364",
+   "name": "Liverpool"
+  },
+  "home_score": 1,
+  "id": "740975",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "AVL",
+   "colour": "660e36",
+   "id": "362",
+   "name": "Aston Villa"
+  },
+  "away_score": 2,
+  "clock": "90'+12'",
+  "home": {
+   "abbr": "MNC",
+   "colour": "99c5ea",
+   "id": "382",
+   "name": "Manchester City"
+  },
+  "home_score": 1,
+  "id": "740970",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "BOU",
+   "colour": "f42727",
+   "id": "349",
+   "name": "AFC Bournemouth"
+  },
+  "away_score": 1,
+  "clock": "90'+12'",
+  "home": {
+   "abbr": "NFO",
+   "colour": "c8102e",
+   "id": "393",
+   "name": "Nottingham Forest"
+  },
+  "home_score": 1,
+  "id": "740972",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "CHE",
+   "colour": "144992",
+   "id": "363",
+   "name": "Chelsea"
+  },
+  "away_score": 1,
+  "clock": "90'+13'",
+  "home": {
+   "abbr": "SUN",
+   "colour": "EB172B",
+   "id": "366",
+   "name": "Sunderland"
+  },
+  "home_score": 2,
+  "id": "740973",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "EVE",
+   "colour": "0606fa",
+   "id": "368",
+   "name": "Everton"
+  },
+  "away_score": 0,
+  "clock": "90'+12'",
+  "home": {
+   "abbr": "TOT",
+   "colour": "ffffff",
+   "id": "367",
+   "name": "Tottenham Hotspur"
+  },
+  "home_score": 1,
+  "id": "740974",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ },
+ {
+  "away": {
+   "abbr": "LEE",
+   "colour": "ffffff",
+   "id": "357",
+   "name": "Leeds United"
+  },
+  "away_score": 0,
+  "clock": "90'+5'",
+  "home": {
+   "abbr": "WHU",
+   "colour": "7c2c3b",
+   "id": "371",
+   "name": "West Ham United"
+  },
+  "home_score": 3,
+  "id": "740971",
+  "period": 2,
+  "situation": null,
+  "start_utc": 1779634800,
+  "status": "post",
+  "status_display": "FT"
+ }
+]

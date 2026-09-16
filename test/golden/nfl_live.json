@@ -1,0 +1,37 @@
+[
+ {
+  "away": {
+   "abbr": "KC",
+   "colour": "e31837",
+   "id": "12",
+   "name": "Kansas City Chiefs"
+  },
+  "away_score": 7,
+  "clock": "6:32",
+  "home": {
+   "abbr": "BAL",
+   "colour": "241773",
+   "id": "33",
+   "name": "Baltimore Ravens"
+  },
+  "home_score": 10,
+  "id": "401671842",
+  "period": 2,
+  "situation": {
+   "balls": null,
+   "distance": 7,
+   "down": 3,
+   "is_red_zone": false,
+   "on_first": false,
+   "on_second": false,
+   "on_third": false,
+   "outs": null,
+   "possession": "12",
+   "strikes": null,
+   "yard_line": 35
+  },
+  "start_utc": 1757264400,
+  "status": "in",
+  "status_display": "Q2 6:32"
+ }
+]

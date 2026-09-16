@@ -1,0 +1,25 @@
+[
+ {
+  "away": {
+   "abbr": "CAR",
+   "colour": "e30426",
+   "id": "7",
+   "name": "Carolina Hurricanes"
+  },
+  "away_score": 3,
+  "clock": "0:00",
+  "home": {
+   "abbr": "VGK",
+   "colour": "344043",
+   "id": "37",
+   "name": "Vegas Golden Knights"
+  },
+  "home_score": 0,
+  "id": "401874176",
+  "period": 3,
+  "situation": null,
+  "start_utc": 1781481600,
+  "status": "post",
+  "status_display": "Final"
+ }
+]

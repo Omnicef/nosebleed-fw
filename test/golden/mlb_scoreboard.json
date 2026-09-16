@@ -1,0 +1,347 @@
+[
+ {
+  "away": {
+   "abbr": "MIA",
+   "colour": "00a3e0",
+   "id": "28",
+   "name": "Miami Marlins"
+  },
+  "away_score": 4,
+  "clock": "0:00",
+  "home": {
+   "abbr": "PIT",
+   "colour": "000000",
+   "id": "23",
+   "name": "Pittsburgh Pirates"
+  },
+  "home_score": 2,
+  "id": "401815752",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781453700,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "SD",
+   "colour": "2f241d",
+   "id": "25",
+   "name": "San Diego Padres"
+  },
+  "away_score": 5,
+  "clock": "0:00",
+  "home": {
+   "abbr": "BAL",
+   "colour": "df4601",
+   "id": "1",
+   "name": "Baltimore Orioles"
+  },
+  "home_score": 2,
+  "id": "401815754",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781458500,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "SEA",
+   "colour": "005c5c",
+   "id": "12",
+   "name": "Seattle Mariners"
+  },
+  "away_score": 1,
+  "clock": "0:00",
+  "home": {
+   "abbr": "WSH",
+   "colour": "ab0003",
+   "id": "20",
+   "name": "Washington Nationals"
+  },
+  "home_score": 10,
+  "id": "401815755",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781458500,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "NYY",
+   "colour": "132448",
+   "id": "10",
+   "name": "New York Yankees"
+  },
+  "away_score": 8,
+  "clock": "0:00",
+  "home": {
+   "abbr": "TOR",
+   "colour": "134a8e",
+   "id": "14",
+   "name": "Toronto Blue Jays"
+  },
+  "home_score": 3,
+  "id": "401815753",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781458620,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "ARI",
+   "colour": "aa182c",
+   "id": "29",
+   "name": "Arizona Diamondbacks"
+  },
+  "away_score": 5,
+  "clock": "0:00",
+  "home": {
+   "abbr": "CIN",
+   "colour": "c6011f",
+   "id": "17",
+   "name": "Cincinnati Reds"
+  },
+  "home_score": 3,
+  "id": "401815749",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781458800,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "ATL",
+   "colour": "0c2340",
+   "id": "15",
+   "name": "Atlanta Braves"
+  },
+  "away_score": 1,
+  "clock": "0:00",
+  "home": {
+   "abbr": "NYM",
+   "colour": "002d72",
+   "id": "21",
+   "name": "New York Mets"
+  },
+  "home_score": 8,
+  "id": "401815750",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781458800,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "DET",
+   "colour": "0a2240",
+   "id": "6",
+   "name": "Detroit Tigers"
+  },
+  "away_score": 0,
+  "clock": "0:00",
+  "home": {
+   "abbr": "CLE",
+   "colour": "002b5c",
+   "id": "5",
+   "name": "Cleveland Guardians"
+  },
+  "home_score": 0,
+  "id": "401815751",
+  "period": 1,
+  "situation": null,
+  "start_utc": 1781458800,
+  "status": "post",
+  "status_display": "Postponed"
+ },
+ {
+  "away": {
+   "abbr": "HOU",
+   "colour": "002d62",
+   "id": "18",
+   "name": "Houston Astros"
+  },
+  "away_score": 0,
+  "clock": "0:00",
+  "home": {
+   "abbr": "KC",
+   "colour": "004687",
+   "id": "7",
+   "name": "Kansas City Royals"
+  },
+  "home_score": 4,
+  "id": "401815757",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781460600,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "LAD",
+   "colour": "005a9c",
+   "id": "19",
+   "name": "Los Angeles Dodgers"
+  },
+  "away_score": 4,
+  "clock": "0:00",
+  "home": {
+   "abbr": "CHW",
+   "colour": "000000",
+   "id": "4",
+   "name": "Chicago White Sox"
+  },
+  "home_score": 6,
+  "id": "401815758",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781460600,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "PHI",
+   "colour": "e81828",
+   "id": "22",
+   "name": "Philadelphia Phillies"
+  },
+  "away_score": 0,
+  "clock": "0:00",
+  "home": {
+   "abbr": "MIL",
+   "colour": "13294b",
+   "id": "8",
+   "name": "Milwaukee Brewers"
+  },
+  "home_score": 4,
+  "id": "401815759",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781460600,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "STL",
+   "colour": "be0a14",
+   "id": "24",
+   "name": "St. Louis Cardinals"
+  },
+  "away_score": 4,
+  "clock": "0:00",
+  "home": {
+   "abbr": "MIN",
+   "colour": "031f40",
+   "id": "9",
+   "name": "Minnesota Twins"
+  },
+  "home_score": 5,
+  "id": "401815760",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781460600,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "COL",
+   "colour": "33006f",
+   "id": "27",
+   "name": "Colorado Rockies"
+  },
+  "away_score": 23,
+  "clock": "0:00",
+  "home": {
+   "abbr": "ATH",
+   "colour": "003831",
+   "id": "11",
+   "name": "Athletics"
+  },
+  "home_score": 9,
+  "id": "401815762",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781463900,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "CHC",
+   "colour": "0e3386",
+   "id": "16",
+   "name": "Chicago Cubs"
+  },
+  "away_score": 1,
+  "clock": "0:00",
+  "home": {
+   "abbr": "SF",
+   "colour": "000000",
+   "id": "26",
+   "name": "San Francisco Giants"
+  },
+  "home_score": 5,
+  "id": "401815761",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781464200,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "TB",
+   "colour": "092c5c",
+   "id": "30",
+   "name": "Tampa Bay Rays"
+  },
+  "away_score": 8,
+  "clock": "0:00",
+  "home": {
+   "abbr": "LAA",
+   "colour": "ba0021",
+   "id": "3",
+   "name": "Los Angeles Angels"
+  },
+  "home_score": 3,
+  "id": "401815763",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781467620,
+  "status": "post",
+  "status_display": "Final"
+ },
+ {
+  "away": {
+   "abbr": "TEX",
+   "colour": "003278",
+   "id": "13",
+   "name": "Texas Rangers"
+  },
+  "away_score": 6,
+  "clock": "0:00",
+  "home": {
+   "abbr": "BOS",
+   "colour": "0d2b56",
+   "id": "2",
+   "name": "Boston Red Sox"
+  },
+  "home_score": 4,
+  "id": "401815756",
+  "period": 9,
+  "situation": null,
+  "start_utc": 1781479200,
+  "status": "post",
+  "status_display": "Final"
+ }
+]

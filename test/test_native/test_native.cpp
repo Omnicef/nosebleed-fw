@@ -707,6 +707,88 @@ static void test_data_filter_mlb(void) {
     TEST_ASSERT_TRUE(doc["events"][0]["competitions"][0]["odds"].isNull());
 }
 
+// T-5.5 — to_games must match the Python's norm_game field-for-field over
+// all six fixtures. Goldens come from the Marquee's own code
+// (tools/gen_games_golden.py); the C++ never sees the Python at test time.
+static const char* const kFixtures[] = {
+    "epl_scoreboard", "mlb_live", "mlb_scoreboard", "nba_scoreboard",
+    "nfl_live", "nhl_scoreboard",
+};
+
+static int16_t gold_int(JsonVariantConst v) { return v.isNull() ? nb::data::kNoInt : (int16_t)v.as<int>(); }
+static int gold_status(JsonVariantConst v) {
+    const char* s = v.as<const char*>();
+    return !strcmp(s, "in") ? nb::data::kStatusIn : !strcmp(s, "post") ? nb::data::kStatusPost : nb::data::kStatusPre;
+}
+
+static void gold_team(JsonObjectConst g, const nb::data::Team& t, const char* what, int& bad) {
+    if (strcmp(g["id"].as<const char*>(), t.id) ||
+        strcmp(g["name"].as<const char*>(), t.name) ||
+        strcmp(g["abbr"].as<const char*>(), t.abbr) ||
+        (uint32_t)strtoul(g["colour"].as<const char*>(), nullptr, 16) != t.colour) {
+        ++bad;
+        std::printf("    %s team: got id=%s name=%s abbr=%s col=%06x want id=%s name=%s abbr=%s col=%s\n",
+                    what, t.id, t.name, t.abbr, t.colour,
+                    g["id"].as<const char*>(), g["name"].as<const char*>(),
+                    g["abbr"].as<const char*>(), g["colour"].as<const char*>());
+    }
+}
+
+static void test_data_norm_golden(void) {
+    using namespace nb::data;
+    for (const char* name : kFixtures) {
+        char path[128];
+        std::snprintf(path, sizeof path, "test/fixtures/%s.json", name);
+        std::ifstream f(path);
+        TEST_ASSERT_TRUE_MESSAGE(f.is_open(), path);
+        JsonDocument filter;
+        build_scoreboard_filter(filter);
+        JsonDocument doc;
+        TEST_ASSERT_FALSE_MESSAGE(static_cast<bool>(parse_scoreboard(f, filter, doc)), name);
+
+        static GameList list;
+        const int n = to_games(doc, list);
+
+        std::snprintf(path, sizeof path, "test/golden/%s.json", name);
+        std::ifstream gf(path);
+        TEST_ASSERT_TRUE_MESSAGE(gf.is_open(), path);
+        JsonDocument gold;
+        TEST_ASSERT_FALSE_MESSAGE(static_cast<bool>(deserializeJson(gold, gf)), name);
+        TEST_ASSERT_EQUAL_INT(gold.size(), n);
+
+        int bad = 0;
+        int i = 0;
+        for (JsonObjectConst g : gold.as<JsonArrayConst>()) {
+            const Game& gm = list.games[i++];
+            if (strcmp(g["id"].as<const char*>(), gm.id)) { ++bad; std::printf("    id: %s != %s\n", gm.id, g["id"].as<const char*>()); }
+            if (gm.status != (uint8_t)gold_status(g["status"])) { ++bad; std::printf("    %s: status %d != %s\n", gm.id, gm.status, g["status"].as<const char*>()); }
+            if (strcmp(g["status_display"].as<const char*>(), gm.status_display)) { ++bad; std::printf("    %s: status_display %s != %s\n", gm.id, gm.status_display, g["status_display"].as<const char*>()); }
+            if (gm.period != gold_int(g["period"])) { ++bad; std::printf("    %s: period\n", gm.id); }
+            if (strcmp(g["clock"].isNull() ? "" : g["clock"].as<const char*>(), gm.clock)) { ++bad; std::printf("    %s: clock %s\n", gm.id, gm.clock); }
+            gold_team(g["away"], gm.away, gm.id, bad);
+            gold_team(g["home"], gm.home, gm.id, bad);
+            if (gm.away_score != gold_int(g["away_score"]) || gm.home_score != gold_int(g["home_score"])) { ++bad; std::printf("    %s: score %d-%d\n", gm.id, gm.away_score, gm.home_score); }
+            if (gm.start_utc != (int64_t)g["start_utc"].as<int64_t>()) { ++bad; std::printf("    %s: start %lld != %lld\n", gm.id, (long long)gm.start_utc, (long long)g["start_utc"].as<int64_t>()); }
+            JsonObjectConst s = g["situation"].is<JsonObjectConst>() ? g["situation"].as<JsonObjectConst>() : JsonObjectConst();
+            const bool gold_has = g["situation"].is<JsonObjectConst>();
+            if ((bool)gold_has != (bool)gm.has_situation) { ++bad; std::printf("    %s: situation presence\n", gm.id); continue; }
+            if (!gold_has) continue;
+            if (s["on_first"].as<bool>() != !!gm.situation.on_first ||
+                s["on_second"].as<bool>() != !!gm.situation.on_second ||
+                s["on_third"].as<bool>() != !!gm.situation.on_third ||
+                s["is_red_zone"].as<bool>() != !!gm.situation.is_red_zone) { ++bad; std::printf("    %s: situation bases\n", gm.id); }
+            if (gm.situation.balls != gold_int(s["balls"]) || gm.situation.strikes != gold_int(s["strikes"]) ||
+                gm.situation.outs != gold_int(s["outs"]) || gm.situation.down != gold_int(s["down"]) ||
+                gm.situation.distance != gold_int(s["distance"]) || gm.situation.yard_line != gold_int(s["yard_line"])) {
+                ++bad; std::printf("    %s: situation counts down=%d dist=%d yard=%d\n", gm.id, gm.situation.down, gm.situation.distance, gm.situation.yard_line);
+            }
+            if (strcmp(s["possession"].isNull() ? "" : s["possession"].as<const char*>(), gm.situation.possession)) { ++bad; std::printf("    %s: possession %s\n", gm.id, gm.situation.possession); }
+        }
+        std::printf("  %s: %d games match the Python field-for-field\n", name, n);
+        TEST_ASSERT_EQUAL_MESSAGE(0, bad, name);
+    }
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -727,5 +809,6 @@ int main(void) {
     RUN_TEST(test_data_cache_basic);
     RUN_TEST(test_data_cache_stress);
     RUN_TEST(test_data_filter_mlb);
+    RUN_TEST(test_data_norm_golden);
     return UNITY_END();
 }

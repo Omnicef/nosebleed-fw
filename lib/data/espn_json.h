@@ -34,5 +34,13 @@ DeserializationError parse_scoreboard(TStream&& in, JsonDocument& filter,
                            DeserializationOption::NestingLimit(20));
 }
 
+// Marquee norm_game / norm_team_from_competitor / _norm_situation /
+// _safe_int / _parse_date, ported. Reads a filtered scoreboard root,
+// fills out->games (clamped to kMaxGamesPerLeague), returns the count.
+// out->count/fetched_utc are NOT touched (the cache owns publication).
+// start_utc: ESPN dates are whole-minute ISO-8601 UTC; unparseable -> 0
+// (Python: now() — fixtures never hit it; device retries next poll anyway).
+int to_games(JsonVariantConst root, GameList& out);
+
 }  // namespace data
 }  // namespace nb
