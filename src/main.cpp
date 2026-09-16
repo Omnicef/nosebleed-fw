@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "config.h"
 #include "store.h"
+#include "timezone.h"
 
 // T-4.2 lesson: 3.3 KB Config must never sit on a task stack (loopTask's is
 // 8 KB and the render task's is 8 KB too). One global, the writer owns it.
@@ -262,6 +263,7 @@ static void task_render(void*) {
     // Wake on config change (T-4.3) or heartbeat every 5 s otherwise.
     if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000))) {
       nb::config::load(g_cfg);  // writer already persisted; pull new values
+      nb::config::apply_timezone(g_cfg.hw.timezone);  // live TZ swap too
       Serial.printf("[render] config applied live: brightness=%u mode=%u\n",
                     static_cast<unsigned>(g_cfg.hw.brightness),
                     static_cast<unsigned>(g_cfg.hw.display_mode));
@@ -320,6 +322,9 @@ void setup() {
   if (!nb::config::load(g_cfg)) Serial.println("config: absent/corrupt — seeded defaults");
   else Serial.printf("config: loaded (brightness=%u)\n",
                      static_cast<unsigned>(g_cfg.hw.brightness));
+  Serial.printf("timezone: '%s' -> %s\n", g_cfg.hw.timezone,
+                nb::config::apply_timezone(g_cfg.hw.timezone) == nb::config::TzResult::kApplied
+                    ? "applied" : "UTC fallback");
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.

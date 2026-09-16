@@ -280,3 +280,13 @@ and 6 territory, port there. Three self-inflicted wrong expectations caught
 by Python cross-check before trusting a red test (06:59 UTC is Mar 8 not 7;
 Sydney's Oct 4 02:00 local is Oct 3 UTC; the discriminator is now's local
 date, not game X's). Native 13/13.
+
+## T-4.7 — phase done (2026-09-16)
+
+Wired `apply_timezone` into boot (after config load) and into the
+task_render live-reload path — a timezone edit now applies without restart,
+same notification as brightness. Normal esp32s3 build re-flashed (board back
+off the configtest image); boot serial shows
+`config: loaded (brightness=40)` / `timezone: '' -> UTC fallback` and all
+four heartbeats. Native 13/13. Accept criteria all met in T-4.1..T-4.6;
+nothing deferred to later phases. Phase 4 complete.
