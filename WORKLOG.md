@@ -106,3 +106,48 @@ arbitrary text):
 - Preferred and cheap: emit **numeric-only** (byte/int arrays, hex), so data
   can never carry C syntax. Do this whenever the value isn't human-meaningful.
 - When a label must be human-readable, restrict to `[A-Za-z0-9_]`.
+
+## Phase 3 — T-3.4/T-3.5/T-3.6 (host complete; T-3.4/T-3.7 device proof pending)
+
+### T-3.4 — logos.bin reader (`lib/logos/logos.h` pure + `logos_esp.h` mmap)
+
+`init_mmap()` (renamed from `init` — collides with Arduino's global
+`init(void)`), binary-search `find()`, zero allocation, byte-wise decode.
+**Finding: `struct "<8s4sIHHH"` is 22 B, not the 20 B every doc/summary
+claimed** — the trailing rsvd u16 is part of the stride; at 20 the binary
+search desyncs on every lookup past entry 0. Caught by the new host test
+against the real atlas (synthetic-only tests passed at both strides —
+real-artifact coverage earned its keep immediately).
+
+Host proof now: `test_logos_parse_host` — synthetic 2-entry atlas
+(hit/hit/miss/miss) + real `logos.bin` (count 144, FNV-1a of px+mask matches
+host-computed values for mlb:BOS / nba:LAL / epl:LIV / nhl:BOS, nhl:BOS is
+the cross-league duplicate-abbreviation case; `mlb:ZZZ` misses; soft-skips
+when the gitignored artifact is absent so CI stays green).
+
+Device proof pending (board disconnected mid-session): `logostest` env →
+heap free + largest-block deltas 0/0 across init+lookups, hash PASS line,
+then deliberate FRAME-phase trap. One flash + serial capture closes T-3.4
+and T-3.7 together.
+
+### T-3.5 — masked blit (`lib/render/logo.{h,cpp}`)
+
+`blit_logo(canvas, x, y, LogoArt)` — alpha-test blit of RGB565 px through a
+MSB-first 1-bit mask, canvas-clipped, degenerate refs return false. Parity
+against Pillow's `card.paste(logo, box, mask=logo)` is exact (0/2048 px)
+because atlas alpha is binary by construction (threshold 128 at build, so
+Pillow's blend degenerates to the alpha test). Golden generated from the
+**real atlas bytes** (`tools/gen_logo_golden.py` reads `logos.bin` via
+`build_logos.read`): `epl:LIV` 17×32 — thin strokes punish any mask
+off-by-one — pasted on non-black bg so masked-out pixels must show it.
+Also asserts partly-offscreen blits clip without smearing.
+
+### T-3.6 — fallback
+
+`draw_abbr_fallback` — `abbr[:3]` in team colour, spleen-5x8 vertically
+centred in the logo box (`y + (logo_h-8)/2`, `game_strip._paste_logo`),
+returns painted width. `parse_hex565` handles ESPN `color` (leading `#`
+optional, malformed rejected). Golden parity 0/2048 px; null-art blit is
+safe (false, canvas untouched — never crash/blank, T-3.6 acceptance).
+
+`pio test -e native` 8/8; purity guard clean; `esp32s3` build green.

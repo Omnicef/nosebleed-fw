@@ -7,12 +7,17 @@
 
 #include "unity.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "canvas.h"
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
+#include "golden_logo.h"
+#include "logo.h"
+#include "logos.h"
 #include "png_writer.h"
 #include "primitives.h"
 
@@ -130,6 +135,131 @@ static void test_clock_parity(void) {
     canvas_free(c);
 }
 
+// T-3.5 — blit_logo on the REAL atlas bytes (px+mask from logos.bin via
+// golden_logo.h) must equal Pillow's card.paste(logo, box, mask=logo) on the
+// same art. Zero differing pixels.
+static void test_blit_logo_parity(void) {
+    Canvas16 c = canvas_alloc(GCARD_W, GCARD_H);
+    fill_rect(c, 0, 0, GCARD_W, GCARD_H, GLOGO_BG);
+    const LogoArt art{LOGO_PX, LOGO_MASK, LOGO_W, LOGO_H};
+    TEST_ASSERT_TRUE(blit_logo(c, LOGO_X, LOGO_Y, art));
+
+    int diffs = 0;
+    for (int i = 0; i < GCARD_W * GCARD_H; ++i)
+        if (c.px[i] != GOLD_PASTE[i]) ++diffs;
+
+    uint8_t rgb[GCARD_W * GCARD_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/logo_fw.png", GCARD_W, GCARD_H, rgb),
+                             "logo_fw.png write failed");
+
+    // Partly-offscreen blit must clip, not crash or smear.
+    TEST_ASSERT_TRUE(blit_logo(c, -10, -10, art));
+    TEST_ASSERT_EQUAL_UINT16(GLOGO_BG, c.get(GCARD_W - 1, GCARD_H - 1));
+
+    canvas_free(c);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "logo paste parity: px differ");
+}
+
+// T-3.6 — no art in the atlas: abbreviation in team colour at exactly the
+// Python's fallback position (golden B). Also: degenerate refs must be safe.
+static void test_abbr_fallback(void) {
+    uint16_t col = 0;
+    TEST_ASSERT_TRUE(parse_hex565("c8102e", col));
+    TEST_ASSERT_EQUAL_UINT16(FBCOL, col);
+    TEST_ASSERT_TRUE(parse_hex565("#C8102E", col));  // leading '#' accepted
+    TEST_ASSERT_EQUAL_UINT16(FBCOL, col);
+    TEST_ASSERT_FALSE(parse_hex565("c8102", col));  // short input rejected
+    TEST_ASSERT_FALSE(parse_hex565("zz102e", col));
+
+    Canvas16 c = canvas_alloc(GCARD_W, GCARD_H);
+    const int w = draw_abbr_fallback(c, FBX, FBY, FBH, "LIV", col);
+    TEST_ASSERT_EQUAL_INT(15, w);  // 3 chars * spleen-5x8 advance
+
+    int diffs = 0;
+    for (int i = 0; i < GCARD_W * GCARD_H; ++i)
+        if (c.px[i] != GOLD_FALLBACK[i]) ++diffs;
+
+    // Empty/absent art: false, canvas untouched — never a crash (T-3.6).
+    const LogoArt none{nullptr, nullptr, 0, 0};
+    Canvas16 d = canvas_alloc(8, 8);
+    TEST_ASSERT_FALSE(blit_logo(d, 2, 2, none));
+    for (int i = 0; i < 64; ++i) TEST_ASSERT_EQUAL_UINT16(0, d.px[i]);
+
+    canvas_free(c);
+    canvas_free(d);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "fallback parity: px differ");
+}
+
+// T-3.4 host half — the pure index parser (logos.h) against a synthetic
+// 2-entry atlas, then the real logos.bin when present (it is a gitignored
+// build artifact). Mirrors the device test so the byte-wise rd16/rd32/
+// key_cmp/find path is host-proven before flashing anything.
+static uint32_t fnv1a(const uint8_t* p, size_t n) {
+    uint32_t h = 2166136261u;
+    while (n--) { h ^= *p++; h *= 16777619u; }
+    return h;
+}
+
+static void test_logos_parse_host(void) {
+    using namespace nb::logos;
+    static const uint8_t hdr[12] = {'N', 'B', 'L', 'G', 1, 0, 2, 0, 32, 0, 0, 0};
+    // e0: epl:LIV off=56 w=2 h=1 (px F800,07E0 + mask 0x80)
+    // e1: mlb:BOS off=61 w=1 h=1 (px 001F + mask 0x01)
+    uint8_t idx0[22] = {0}, idx1[22] = {0};
+    memcpy(idx0, "epl", 3); memcpy(idx0 + 8, "LIV", 3);
+    idx0[12] = 56; idx0[16] = 2; idx0[18] = 1;
+    memcpy(idx1, "mlb", 3); memcpy(idx1 + 8, "BOS", 3);
+    idx1[12] = 61; idx1[16] = 1; idx1[18] = 1;
+    const uint8_t blobs[8] = {0x00, 0xF8, 0xE0, 0x07, 0x80, 0x1F, 0x00, 0x01};
+    uint8_t buf[64];
+    memcpy(buf, hdr, 12);
+    memcpy(buf + 12, idx0, 22);
+    memcpy(buf + 34, idx1, 22);
+    memcpy(buf + 56, blobs, 8);
+
+    Header h;
+    TEST_ASSERT_TRUE(parse_header(buf, h));
+    TEST_ASSERT_EQUAL_UINT16(2, h.count);
+    TEST_ASSERT_EQUAL_UINT16(32, h.logo_height);
+
+    Ref r;
+    TEST_ASSERT_TRUE(find(buf, h.count, "epl", "LIV", r));  // lower half
+    TEST_ASSERT_EQUAL_UINT16(2, r.w);
+    TEST_ASSERT_TRUE(memcmp(r.px, blobs, 4) == 0);
+    TEST_ASSERT_EQUAL_UINT8(0x80, r.mask[0]);
+    TEST_ASSERT_TRUE(find(buf, h.count, "mlb", "BOS", r));  // upper half
+    TEST_ASSERT_EQUAL_UINT8(0x01, r.mask[0]);
+    TEST_ASSERT_FALSE(find(buf, h.count, "mla", "ZZZ", r));  // miss between
+    TEST_ASSERT_FALSE(find(buf, h.count, "nfl", "KC", r));   // miss above
+
+    // Real atlas: same checks the device runs, when the artifact exists.
+    FILE* f = fopen("logos.bin", "rb");
+    if (f == nullptr) TEST_IGNORE_MESSAGE("logos.bin absent — run the atlas build");
+    fseek(f, 0, SEEK_END);
+    const long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t* atlas = static_cast<uint8_t*>(malloc(sz));
+    const size_t got = fread(atlas, 1, sz, f);
+    fclose(f);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sz, got, "logos.bin short read");
+    TEST_ASSERT_TRUE(parse_header(atlas, h));
+    TEST_ASSERT_EQUAL_UINT16(144, h.count);
+    struct Want { const char* l; const char* a; uint32_t hash; };
+    static const Want wants[] = {
+        {"mlb", "BOS", 0xa917f7d6u}, {"nba", "LAL", 0xeacc63aau},
+        {"epl", "LIV", 0x1b0feca6u}, {"nhl", "BOS", 0x6322ff39u},
+    };
+    for (const auto& w : wants) {
+        TEST_ASSERT_TRUE_MESSAGE(find(atlas, h.count, w.l, w.a, r), w.a);
+        const size_t n = static_cast<size_t>(r.w) * r.h * 2 +
+                         ((static_cast<size_t>(r.w) + 7) / 8) * r.h;
+        TEST_ASSERT_EQUAL_HEX32_MESSAGE(w.hash, fnv1a(r.px, n), w.a);
+    }
+    TEST_ASSERT_FALSE(find(atlas, h.count, "mlb", "ZZZ", r));
+    free(atlas);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -137,5 +267,8 @@ int main(void) {
     RUN_TEST(test_primitives);
     RUN_TEST(test_font_sheet);
     RUN_TEST(test_clock_parity);
+    RUN_TEST(test_blit_logo_parity);
+    RUN_TEST(test_abbr_fallback);
+    RUN_TEST(test_logos_parse_host);
     return UNITY_END();
 }
