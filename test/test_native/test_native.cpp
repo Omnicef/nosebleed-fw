@@ -337,6 +337,36 @@ static void test_config_validate(void) {
     TEST_ASSERT_FALSE(validate(bad));
 }
 
+// T-4.4: restart flag on CHANGED structural values only. The Marquee fix:
+// resubmitting unchanged fields (field "presence") must not flag; brightness
+// and other live edits must not flag; each geometry/timing field must.
+static void test_config_structural_change(void) {
+    using namespace nb::config;
+    Config a, b;
+    set_defaults(a);
+    b = a;
+    TEST_ASSERT_FALSE(hw_structural_changed(a.hw, b.hw));  // full resubmit, no edits
+
+    b = a; b.hw.brightness = 40;                     // live fields: never flag
+    TEST_ASSERT_FALSE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.display_mode = 1 - a.hw.display_mode;
+    TEST_ASSERT_FALSE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.scroll_speed = a.hw.scroll_speed + 1.5f;
+    TEST_ASSERT_FALSE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.reserved = 0xAB;                     // padding must not flag
+    TEST_ASSERT_FALSE(hw_structural_changed(a.hw, b.hw));
+
+    b = a; b.hw.rows = 16;                            TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.cols = 128;                           TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.chain_length = 2;                     TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.parallel = 2;                         TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.lsb_msb_transition_bit = 0;           TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.clkphase = 1;                         TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.latch_blanking = 3;                   TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.i2sspeed = 1;                         TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+    b = a; b.hw.double_buff = 1 - a.hw.double_buff;   TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -349,5 +379,6 @@ int main(void) {
     RUN_TEST(test_logos_parse_host);
     RUN_TEST(test_config_defaults);
     RUN_TEST(test_config_validate);
+    RUN_TEST(test_config_structural_change);
     return UNITY_END();
 }

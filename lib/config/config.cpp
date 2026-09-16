@@ -107,5 +107,18 @@ void set_defaults(Config& c) {
     c.favorite_count = 0;
 }
 
+bool hw_structural_changed(const HardwareSetting& old, const HardwareSetting& now) {
+    // Field-by-field on purpose: a whole-struct memcmp would flag brightness
+    // or timezone edits as "needs restart". `reserved` is excluded so adding
+    // a live field later can't false-trigger.
+    return old.rows != now.rows || old.cols != now.cols ||
+           old.chain_length != now.chain_length || old.parallel != now.parallel ||
+           old.lsb_msb_transition_bit != now.lsb_msb_transition_bit ||
+           old.clkphase != now.clkphase ||
+           old.latch_blanking != now.latch_blanking ||
+           old.i2sspeed != now.i2sspeed ||
+           old.double_buff != now.double_buff;
+}
+
 }  // namespace config
 }  // namespace nb

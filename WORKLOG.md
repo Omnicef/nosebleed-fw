@@ -237,3 +237,14 @@ timeout → heartbeat.
 check, a render-shaped listener task binds, test sets brightness=40 and
 saves → listener woke from the notification and read 40 back → PASS, no
 restart. Normal boot now prints the loaded (or seeded) config.
+
+## T-4.4 — structural-change detection (2026-09-16)
+
+`hw_structural_changed(old, now)` — pure, two structs in, one bool out, so
+"field present in payload" *cannot* flag anything; only value diffs can
+(the Marquee fix, enforced by the signature itself). Field set: Marquee's
+minus the Pi five, plus their ESP32 equivalents (lsb_msb_transition_bit,
+clkphase, latch_blanking, i2sspeed, double_buff). `reserved` deliberately
+excluded. Native 11/11; caught two self-inflicted traps on the way (Config
+vs Config.hw at the call site; default `lsb_msb_transition_bit` is already
+1 — the "change" test must use 0).

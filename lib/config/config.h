@@ -119,5 +119,14 @@ bool validate(const Config& c);
 // LeagueConfig row per slug (only MLB enabled).
 void set_defaults(Config& c);
 
+// T-4.4 — restart-banner condition: true iff a panel-geometry / DMA-timing
+// field CHANGED between the stored and the proposed setting. Marquee's
+// STRUCTURAL_FIELDS ported to ESP32: Pi fields (hardware_mapping,
+// gpio_slowdown, pwm_* , pixel_mapper_config) are gone; our lsbMsbTransitionBit/
+// clkphase/latch_blanking/i2sspeed/double_buff are their equivalents.
+// Compares values, never "was the key in the payload" — that Marquee fix
+// is preserved by this being the only API (two structs in, one bool out).
+bool hw_structural_changed(const HardwareSetting& old, const HardwareSetting& now);
+
 }  // namespace config
 }  // namespace nb
