@@ -399,3 +399,32 @@ VIOLATES (≈70,000 caught/3 runs): the detector demonstrably has teeth. Then
 the real cache: 0 torn, 0 retries, in 3/3 runs. Whole DataCache = 57.6 KB
 PSRAM (static on device, never a task stack). -pthread added to env:native.
 Native 17/17.
+
+## T-5.3 — HTTP client wrapper (2026-09-16)
+
+`lib/data/http.h` — header-only (both entry points are templates, so a .cpp
+would be decoration): esp_http_client + `esp_crt_bundle_attach`, 15 s timeout,
+`Accept-Encoding: identity`, UA `python-requests/2.31` (Akamai allowlist,
+T-0.4), `HttpStream` copied from the proven T-0.5 spike view, and Marquee's
+`_get()` retry profile — 3 retries, 0.5/1.0/2.0 s + uniform 0–300 ms jitter
+(`esp_random`). Exactly one `close+cleanup` per `init` on every path
+including mid-body failure; "one TLS session at a time" is caller discipline
+(T-5.7's sequential poll task). Every ESP call verified against the installed
+esp32s3 headers — one was almost wrong: `esp_http_client_get_content_length`
+returns **int64_t**, not int; `HttpStat::clen` matches.
+Proof = `env:httptest` on hardware, boot order WiFi → SNTP → TLS:
+- forced DNS failure (`.invalid`): all 4 attempts fail, attempt gaps
+  0.74/1.22/2.04 s = the backoff + jitter exactly; 5,026 ms total; internal
+  heap delta +588 B; client then works normally afterwards.
+- NFL scoreboard over TLS: 200, 280,458 B in 8,667 ms, internal heap delta
+  **784 B after cleanup** — a ~50 KB session fully reclaimed, no leak.
+  RESULT: PASS.
+Finding for T-5.4/T-5.6: ESPN serves the scoreboard **chunked** —
+`Content-Length: -1`, so the spike's "bytes == Content-Length" check can't
+apply; the self-counted `HttpStream::bytes()` is the substitute. Also: the
+NFL scoreboard is now ~280 KB, not the 3 KB the old fixture suggested —
+date-window narrowing (T-5.6) matters for every league, not just MLB.
+`ReadBufferingStream(Stream&, capacity)` signature re-verified in the main
+project's own `.pio/libdeps`. Deps added: ArduinoJson 7.4.3 (registry) +
+StreamUtils 1.9.2 — **not resolvable from the registry**, pinned by v1.9.2
+commit hash in `lib_deps`; licence doc updated. esp32s3 + httptest both build.

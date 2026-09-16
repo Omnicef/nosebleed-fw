@@ -341,6 +341,113 @@ static void config_boot_check() {
 }
 #endif  // NB_CONFIG_TEST
 
+#ifdef NB_HTTP_TEST
+// T-5.3 — HTTP transport proof (env:httptest). Boot order is the hard rule:
+// WiFi -> SNTP -> first TLS (cert notBefore validation needs the clock).
+// 1. forced DNS failure: every attempt fails, backoff is honoured, nothing
+//    crashes or leaks; 2. NFL scoreboard over TLS (T-04-proven URL): status
+//    200 and body bytes counted off HttpStream == Content-Length.
+// Internal heap is sampled around each http_get(): esp_http_client_close +
+// cleanup run on every path including mid-body failure, so the post-call
+// delta must be ~0 — that is the "never leaks a session" measurement.
+#include <WiFi.h>
+#include "http.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#else
+#define WIFI_SSID ""
+#define WIFI_PASS ""
+#endif
+
+static uint32_t http_int_free() {
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
+static void http_test() {
+    int fails = 0;
+    Serial.println("T-5.3 HTTP transport test:");
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    const uint8_t st = WiFi.waitForConnectResult(20000);
+    if (st != WL_CONNECTED) {
+        Serial.printf("  FAIL: wifi status=%u\n", static_cast<unsigned>(st));
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    Serial.printf("  wifi %s\n", WiFi.localIP().toString().c_str());
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    time_t now = 0;
+    uint32_t waited = 0;
+    while (now < 1700000000 && waited < 20000) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited += 100;
+        now = time(nullptr);
+    }
+    if (now < 1700000000) {
+        Serial.println("  FAIL: SNTP not synced in 20 s — refusing TLS (hard rule)");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    Serial.printf("  sntp synced in %lu ms (TLS may proceed)\n",
+                  static_cast<unsigned long>(waited));
+
+    // 1. forced DNS failure — .invalid is reserved-NXDOMAIN by RFC 6761.
+    {
+        nb::data::HttpStat stat;
+        const uint32_t t0 = millis(), f0 = http_int_free();
+        const bool ok = nb::data::http_get(
+            "http://nosebleed-nope.invalid./scoreboard.json",
+            [](nb::data::HttpStream&) { return true; }, &stat);
+        const uint32_t dt = millis() - t0;
+        const int32_t d = static_cast<int32_t>(f0 - http_int_free());
+        Serial.printf("  dns-fail: ok=%d status=%d elapsed=%lu ms heap_delta=%ld B\n",
+                      ok, stat.status, static_cast<unsigned long>(dt),
+                      static_cast<long>(d));
+        // must fail; must spend >= the 0.5+1.0+2.0 s backoff floor
+        if (ok || dt < 3500 || (d > 1024) || (d < -1024)) {
+            ++fails;
+            Serial.println("    FAIL: expected exhausted retries (>=3.5 s), no heap drift");
+        }
+    }
+
+    // 2. TLS success — the exact T-0.4 URL. Count every body byte off the
+    // stream; cleanup happens inside http_get_once, so measure after it.
+    {
+        nb::data::HttpStat stat;
+        size_t n = 0;
+        const uint32_t t0 = millis(), f0 = http_int_free();
+        const bool ok = nb::data::http_get(
+            "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+            [&](nb::data::HttpStream& s) {
+                char buf[512];
+                for (;;) {
+                    const size_t r = s.readBytes(buf, sizeof buf);
+                    if (r == 0) break;
+                    n += r;
+                }
+                return n > 1000;
+            },
+            &stat);
+        const uint32_t dt = millis() - t0;
+        const int32_t d = static_cast<int32_t>(f0 - http_int_free());
+        Serial.printf("  tls: ok=%d status=%d clen=%lld bytes=%u elapsed=%lu ms heap_delta=%ld B\n",
+                      ok, stat.status, static_cast<long long>(stat.clen),
+                      static_cast<unsigned>(n), static_cast<unsigned long>(dt),
+                      static_cast<long>(d));
+        if (!ok || stat.status != 200 || (stat.clen >= 0 && stat.clen != (int64_t)n)) {
+            ++fails;
+            Serial.println("    FAIL: expected 200 with bytes == Content-Length");
+        }
+        if (d > 1024 || d < -1024) {
+            ++fails;
+            Serial.println("    FAIL: session heap not reclaimed (leak)");
+        }
+    }
+
+    Serial.printf("  RESULT: %s\n", fails ? "FAIL" : "PASS");
+    for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+}
+#endif  // NB_HTTP_TEST
+
 
 // T-1.2 accept: esp_partition_find locates the `logos` and `web` data partitions.
 static void partition_snapshot(void) {
@@ -426,6 +533,10 @@ void setup() {
 
 #ifdef NB_LOGOS_TEST
   logos_test();  // never returns; tasks below are for normal boots only
+#endif
+
+#ifdef NB_HTTP_TEST
+  http_test();  // never returns
 #endif
 
 #ifdef NB_CONFIG_TEST

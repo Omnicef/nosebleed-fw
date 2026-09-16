@@ -13,7 +13,7 @@ pulls them in.
 |---|---|---|---|---|
 | `ESP32-HUB75-MatrixPanel-DMA` (mrcodetastic) | 3.0.15 | MIT | ✅ | `library.properties`; added Phase 2 (T-2.8) |
 | `ArduinoJson` | 7.4.3 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5 |
-| `StreamUtils` (bblanchon) | 1.9.2 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5 |
+| `StreamUtils` (bblanchon) | 1.9.2 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5, pinned by git commit (registry cannot resolve this name/version) |
 | `ESPAsyncWebServer` (ESP32Async fork) | not yet added | **LGPL-3.0** | ✅ | **Verified** — repo `LICENSE`; added Phase 8 (T-8.1) |
 | `Adafruit_GFX` | **not linked** | BSD | ✅ | We build the panel lib with `-DNO_GFX` (T-0.2); GFX never linked. Row kept only because the driver is GFX-*compatible*, not because we depend on it. |
 | Arduino-ESP32 core | 3.3.11 | **LGPL-2.1-or-later** | ✅ | **Resolved** — `package.json` `license` field **and** `Arduino.h` header both say *"version 2.1 … or (at your option) any later version"* → upgrades cleanly to GPL-3.0. Was the one open question. |
