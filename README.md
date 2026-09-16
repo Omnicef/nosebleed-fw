@@ -4,7 +4,22 @@
 
 A live sports ticker and ambient info display for HUB75 LED matrix panels, driven by an ESP32-S3. Scores update in near real time; a rotating carousel of widgets fills the gaps with a clock, weather, news, stocks and crypto. Everything is configured from a web page served by the device itself — no app, no cloud account, no subscription.
 
-> **Status: pre-Phase-0.** Nothing is built yet. This repo currently contains the architecture, the build plan, and the agent guidance. See [`PLAN.md`](PLAN.md).
+> **Status: Phase 3 of 11 complete — in active development, not yet usable.**
+> The panel driver, render core and logo pipeline work on real hardware. There is no config UI, no data layer and no scoreboard yet. See [`PLAN.md`](PLAN.md) for the roadmap.
+
+Two things were validated on hardware before any of it was built, and both are recorded with real numbers in [`SPIKE_RESULTS.md`](SPIKE_RESULTS.md):
+
+- **The ESPN payload is tractable.** A single MLB scoreboard response is **1.46 MB**. Streaming it through an ArduinoJson filter retains ~300 bytes per game and costs 13 KB of internal heap — against a measured 262 KB ceiling.
+- **The rendering is pixel-exact.** Card layouts are ported from the Python original and verified by a **zero-pixel diff** against Pillow's output, so the designs survive the rewrite rather than being re-tuned by eye.
+
+| Phase | | |
+|---|---|---|
+| 0 | Spike — go/no-go gate | ✅ closed, GO |
+| 1 | Skeleton, partitions, task topology, CI | ✅ |
+| 2 | Render core — canvas, fonts, parity gate | ✅ |
+| 3 | Logo pipeline — 144 teams, 259 KB atlas | ✅ |
+| 4–7 | Config, data layer, widgets, scroll engine | ⬜ |
+| 8–11 | Web UI, provisioning, OTA, hardening | ⬜ |
 
 ## Hardware
 
@@ -29,9 +44,11 @@ Most of the code — every widget, all layout, the scroll engine — compiles an
 
 ## Documentation
 
-- [`PLAN.md`](PLAN.md) — the phased build plan, 93 tasks with acceptance criteria
+- [`PLAN.md`](PLAN.md) — the phased build plan, ~100 tasks with acceptance criteria
 - [`AGENTS.md`](AGENTS.md) — architecture, hard rules, memory budget, conventions
 - [`docs/arduinojson-v7.md`](docs/arduinojson-v7.md) — v7 API reference for this project
+- [`SPIKE_RESULTS.md`](SPIKE_RESULTS.md) — Phase 0 measurements on hardware, and the gate verdict
+- [`WORKLOG.md`](WORKLOG.md) — running notes, one entry per task
 
 ## Prior art
 
