@@ -561,3 +561,22 @@ parses every one from a file stream through the same `parse_scoreboard`
 (stream + filter + NestingLimit 20) the device runs on a socket.
 Accept: 6/6 parse in `pio test -e native` (21/21); no test opens a
 socket.
+
+## T-5.2 device proof — cachetest (2026-09-16)
+
+Host stress proved the protocol on x86; Xtensa ordering is weaker, so
+`env:cachetest` re-runs it on device: identical generation payload and
+detector, writer core 0 prio 2 (50 Hz x 4 leagues), reader core 1 prio 3
+(30 Hz), DataCache in PSRAM where the shipped instance will sit.
+
+Result (serialcap):
+  control (in-place mutation): torn=100 last_gen=2 after 57 ms — detector bites
+  hammer (max-rate league 0, 10 s): retries=49 torn=0 — retry branch fires on Xtensa
+  stress 180 s: reads=5455 retries=0 torn=0 str_gen=36001 (reader tracked
+  200 publishes/s to the last one — no stale-cache freeze)
+  CACHE RESULT: PASS
+Actual-cadence retries=0 matches the arithmetic (50 Hz/s x ~100 us copy
+x 180 s = ~0.9 expected overlaps), hence the max-rate hammer phase.
+Two harness bugs fixed en route: a prio-3 hammer reader must yield
+*unconditionally* (retry storm starved the core-1 monitor), and the
+stress loop needs a fixed end anchor.
