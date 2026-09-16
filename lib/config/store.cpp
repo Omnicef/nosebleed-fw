@@ -17,7 +17,10 @@ namespace config {
 namespace {
 constexpr char kNs[] = "nb";
 constexpr char kKey[] = "cfg";
+TaskHandle_t s_render = nullptr;
 }  // namespace
+
+void bind_render_task(TaskHandle_t render) { s_render = render; }
 
 bool load(Config& out) {
     Preferences p;
@@ -39,7 +42,9 @@ bool save(const Config& c) {
     if (!p.begin(kNs)) return false;
     const size_t put = p.putBytes(kKey, &c, sizeof(c));
     p.end();
-    return put == sizeof(c);
+    if (put != sizeof(c)) return false;
+    if (s_render) xTaskNotifyGive(s_render);
+    return true;
 }
 
 bool reset() {

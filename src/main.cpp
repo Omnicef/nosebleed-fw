@@ -12,6 +12,12 @@
 #include "esp_partition.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "config.h"
+#include "store.h"
+
+// T-4.2 lesson: 3.3 KB Config must never sit on a task stack (loopTask's is
+// 8 KB and the render task's is 8 KB too). One global, the writer owns it.
+static nb::config::Config g_cfg;
 
 #ifdef NB_LOGOS_TEST
 // T-3.4 / T-3.7 — logos-partition mmap test, run standalone (env:logostest)
@@ -179,15 +185,42 @@ static void config_test() {
     esp_restart();
 }
 
-static void config_boot_check(const nb::config::Config& c) {
+// T-4.3 — mirrors task_render's wait: binds itself, then blocks on the
+// notification that save() sends. Proves live-apply without any reboot.
+static void cfg_apply_task(void*) {
+    nb::config::bind_render_task(xTaskGetCurrentTaskHandle());
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(3000))) {
+        nb::config::load(g_cfg);
+        Serial.printf("  [render] woke via task notification, brightness now %u\n",
+                      static_cast<unsigned>(g_cfg.hw.brightness));
+        Serial.println(g_cfg.hw.brightness == 40
+                           ? "  RESULT: PASS (T-4.3 — save() woke render, live apply, no restart)"
+                           : "  RESULT: FAIL (T-4.3 — wrong value after notify)");
+    } else {
+        Serial.println("  RESULT: FAIL (T-4.3 — no notification within 3 s)");
+    }
+    for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+}
+
+static void config_boot_check() {
     Serial.printf("T-4.2 boot B persisted load: brightness=%u widgets=%u\n",
-                  static_cast<unsigned>(c.hw.brightness),
-                  static_cast<unsigned>(c.widget_count));
-    Serial.println(c.hw.brightness == 55
+                  static_cast<unsigned>(g_cfg.hw.brightness),
+                  static_cast<unsigned>(g_cfg.widget_count));
+    Serial.println(g_cfg.hw.brightness == 55
                        ? "  RESULT: PASS (boot B — survives restart)"
                        : "  RESULT: FAIL (boot B)");
     nb::config::reset();
-    Serial.println("  blob reset; halting");
+    Serial.println("  blob reset; T-4.3 live-apply test next");
+
+    if (xTaskCreate(cfg_apply_task, "cfgapply", 4 * 1024, nullptr, 2, nullptr) != pdPASS) {
+        Serial.println("  RESULT: FAIL (T-4.3 — could not start listener)");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));  // let the listener bind first
+    g_cfg.hw.brightness = 40;
+    Serial.println(nb::config::save(g_cfg)
+                       ? "  saved brightness=40 (expect wake within ms)"
+                       : "  RESULT: FAIL (T-4.3 — save failed)");
     for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
 }
 #endif  // NB_CONFIG_TEST
@@ -223,7 +256,20 @@ static void heartbeat(const char* name) {
                 static_cast<unsigned long>(hw_words * sizeof(portSTACK_TYPE)));
 }
 
-static void task_render(void*) { for (;;) { heartbeat("render"); vTaskDelay(pdMS_TO_TICKS(5000)); } }
+static void task_render(void*) {
+  nb::config::bind_render_task(xTaskGetCurrentTaskHandle());
+  for (;;) {
+    // Wake on config change (T-4.3) or heartbeat every 5 s otherwise.
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(5000))) {
+      nb::config::load(g_cfg);  // writer already persisted; pull new values
+      Serial.printf("[render] config applied live: brightness=%u mode=%u\n",
+                    static_cast<unsigned>(g_cfg.hw.brightness),
+                    static_cast<unsigned>(g_cfg.hw.display_mode));
+    } else {
+      heartbeat("render");
+    }
+  }
+}
 static void task_poll  (void*) { for (;;) { heartbeat("poll");   vTaskDelay(pdMS_TO_TICKS(5000)); } }
 static void task_web   (void*) { for (;;) { heartbeat("web");    vTaskDelay(pdMS_TO_TICKS(5000)); } }
 static void task_net   (void*) { for (;;) { heartbeat("net");    vTaskDelay(pdMS_TO_TICKS(5000)); } }
@@ -266,12 +312,14 @@ void setup() {
 #ifdef NB_CONFIG_TEST
   {
     // Boot A = fresh/other blob; boot B = ours staged before esp_restart.
-    static nb::config::Config c;
-    if (nb::config::load(c) && c.hw.brightness == 55) config_boot_check(c);
+    if (nb::config::load(g_cfg) && g_cfg.hw.brightness == 55) config_boot_check();
     else config_test();  // both branches never return
   }
 #endif
 
+  if (!nb::config::load(g_cfg)) Serial.println("config: absent/corrupt — seeded defaults");
+  else Serial.printf("config: loaded (brightness=%u)\n",
+                     static_cast<unsigned>(g_cfg.hw.brightness));
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.

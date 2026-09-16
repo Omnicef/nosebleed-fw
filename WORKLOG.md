@@ -224,3 +224,16 @@ loopTask's 8 KB stack (CORRUPT HEAP, then stack-canary panic reboot loop).
 Test instances are `static` now. Rule for Phase 8: **`Config` never goes on
 a task stack** — the web `cfg` handlers and every task must pass pointers to
 static/heap instances. The render task stack note in `AGENTS.md` is 8 KB too.
+
+## T-4.3 — change notification (2026-09-16)
+
+`bind_render_task()` + `save()` fires `xTaskNotifyGive` on success — the
+Python's `settings_event.set()` analogue, one writer (web) one listener
+(render). Render task now blocks in `ulTaskNotifyTake(pdTRUE, 5 s)`:
+wake → reload `g_cfg` (file-scope; the T-4.2 stack rule holds even here),
+timeout → heartbeat.
+
+**Hardware proof (boot B of env:configtest):** after the T-4.2 persisted
+check, a render-shaped listener task binds, test sets brightness=40 and
+saves → listener woke from the notification and read 40 back → PASS, no
+restart. Normal boot now prints the loaded (or seeded) config.
