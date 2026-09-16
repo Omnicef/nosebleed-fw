@@ -63,7 +63,7 @@ Filtering solves the memory problem (~4.5 KB retained from 1.46 MB) but **not** 
 ```
 logos.bin
 ├── header    magic "NBLG", version u16, count u16, logo_height u16, reserved
-├── index[]   { league[8], abbr[4], offset u32, w u8, h u8 }   22 B each (measured — see below)
+├── index[]   { league[8], abbr[4], offset u32, w u16, h u16, rsvd u16 }   22 B exactly
 └── blobs     RGB565 pixels (w*h*2 B) + 1-bit alpha mask (w*h/8 B)
 ```
 
@@ -80,7 +80,7 @@ Comfortably inside the 2 MB `logos` partition either way.
 
 Mapped with `esp_partition_mmap()` and read directly — no decode, no RAM copy, no warm/cold cache distinction. Flash reads go through the cache, so a miss costs a real SPI read: **keep logo access in strip rebuilds, never in the per-frame path.**
 
-> **Index stride is 22 B, not ~20.** The fields sum to 18 B but the struct pads to 22. T-3.4 hit this: an assumed stride desynced **20 lookups** — silently returning the wrong logo, not erroring. Never compute this stride by hand; take it from `sizeof()` on both the writer and reader side and assert they agree.
+> **Index stride is 22 B, and there is no padding.** 8 + 4 + 4 + 2 + 2 + 2 = 22, packed — `struct "<8s4sIHHH"` on the writer, `kEntrySize = 22` on the reader. This spec originally said `w u8, h u8` and "~20 B each"; T-3.4 hit the consequence — an assumed stride desynced **20 lookups**, silently returning the wrong logo rather than erroring. Derive the stride from the format struct on both sides and assert they agree; never hand-count it, and do not "optimise" w/h back to u8 on the assumption alignment will absorb it.
 > **Heap cost: lookups are free, the mapping is not.** Measured at T-3.4 — per-lookup heap delta is **0 B in, 0 B out**, exactly as the architecture assumes. The one-time `esp_partition_mmap()` call itself costs **~104 B** of page-table overhead. Budget it once at init; it is not a per-access cost.
 > **The atlas drifts.** At T-3.3, 46 of 47 keys shared with the Marquee corpus encoded byte-identical; `mlb:ATH` differed because ESPN changed the artwork upstream. Expect this — it is the reason T-9.5 makes `logos.bin` separately OTA-able.
 
@@ -317,7 +317,7 @@ This phase builds the foundation everything visual sits on, **and the test harne
 *Accept:* round-trips through a Python reader; index lookup returns correct offsets.
 
 **T-3.3 — Generate the pro-league atlas.** NFL, NBA, MLB, NHL, EPL.
-*Accept:* 144 logos, file size **~306 KB**, fits the 2 MB partition with room for college later.
+*Accept:* 144 logos, file size **~260 KB** (measured 258,992 B), fits the 2 MB partition with room for college later.
 
 **T-3.4 — mmap reader.** `esp_partition_mmap()` the `logos` partition; binary-search the index; return a pointer + dimensions. No allocation, no copy.
 *Accept:* lookup of a known team returns correct dimensions and non-null pixels. Heap usage before and after is **identical**.
@@ -564,26 +564,42 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 | pioarduino lags an upstream release | any | Low | Small volunteer team, but well-adopted; pin the platform version |
 | Logos stale without OTA | 3 | Low | T-9.5 |
 
-## §6 Measurements to carry forward
+## §6 Measurements
 
-Established during design; re-verify on hardware and update.
+**M** = measured on hardware. **W** = measured in Wokwi. **P** = still a projection — treat with suspicion.
 
-| Quantity | Value |
-|---|---|
-| MLB scoreboard fixture | 1,457,268 B / 15 events / ~97 KB per event |
-| All fixtures | 6 files, 1.77 MB |
-| Retained payload after filtering | ~300 B per game, ~4.5 KB per MLB poll |
-| DMA framebuffer, 64×32, 8-bit | 16 KB single, 32 KB double, internal SRAM |
-| Refresh rate | `lsbMsbTransitionBit` 0 ≈ 57 Hz, 1 ≈ 110 Hz |
-| Card strip, 35 cards | 2520 × 32 × 2 B ≈ 158 KB, PSRAM |
-| Per-frame blit | 4 KB, ~120 KB/s at 30 fps |
-| Logo, 32 px | 2176 B (2048 colour + 128 mask) |
-| Logo atlas, 144 pro teams | ~306 KB |
-| Logo atlas, ~1,000 teams incl. college | ~2.08 MB |
-| mbedTLS per session | ~23 KB at `ssl_setup`, 40–50 KB peak, ~26–36 KB tuned |
-| Asymmetric content-len saving | ~14 KB |
-| Internal SRAM total budget | ~180–240 KB of ~320 KB usable |
-| PSRAM total use | < 400 KB of 8 MB |
-| Python source being replaced | 4,253 LOC, 10 widgets |
-| `draw.textlength()` call sites | 27 (vs 31 `draw.text()`) — the fixed-width font argument |
-| `draw.polygon()` call sites | 4 — needs a scanline fill helper |
+| Quantity | Value | |
+|---|---|---|
+| **Memory** | | |
+| Internal heap ceiling, WiFi + SNTP up | **~262 KB** (268,652 B W; hardware ~6 KB lower) | M |
+| mbedTLS session, peak | **~53 KB** (W) / **~56 KB** (M) — **untunable until T-9.3** | M |
+| Peak simultaneous mbedTLS + active parse | **73,616 B (71.9 KB)** | M |
+| Consumers vs ceiling | 141–165 KB used, **~97–121 KB headroom** | M |
+| DMA framebuffer, 64×32 | ~30 KB internal | M |
+| `esp_partition_mmap()` one-time cost | ~104 B page tables; per-lookup **0 B** | M |
+| PSRAM total use | < 400 KB of 8 MB | P |
+| **Payload and timing** | | |
+| MLB scoreboard fixture | 1,457,268 B / 15 events / ~97 KB per event | M |
+| Retained after filtering (fixture) | 5,676 B raw / 10.5 KB PSRAM | W |
+| Retained after filtering (live, `situation` present) | 24.5 KB PSRAM | M |
+| Filtered parse cost, internal | 1.6 KB (from memory, W) / **13.1 KB** (off TLS, M) | M |
+| **Fetch + parse elapsed, unmitigated** | **6,081 ms against a < 6 s budget** — T-5.6 required | M |
+| ESPN JSON nesting depth | **15** — `NestingLimit(20)` mandatory, default 10 fails | M |
+| All fixtures | 6 files, 1.77 MB | M |
+| **Assets** | | |
+| Logo at 32 px | 2176 B worst case, **~1.8 KB average** | M |
+| Logo atlas, 144 pro teams | **258,992 B** | M |
+| Logo atlas, ~1,000 teams incl. college | ~1.8 MB | P |
+| `logos.bin` index stride | **22 B exactly**, no padding | M |
+| **Panel** | | |
+| Refresh rate | **110 Hz** at `lsbMsbTransitionBit` 1 | M |
+| Card strip, 35 cards | 2520 × 32 × 2 B ≈ 158 KB, PSRAM | P |
+| Per-frame blit | 4 KB, ~120 KB/s at 30 fps | P |
+| **Source** | | |
+| Python being replaced | 4,253 LOC, 10 widgets | M |
+| `draw.textlength()` call sites | 27 (vs 31 `draw.text()`) — the fixed-width font argument | M |
+| `draw.polygon()` call sites | 4 — needs a scanline fill helper | M |
+
+> Superseded projections, kept so they are not re-derived: ~320 KB usable after WiFi (WiFi was double-counted — it is
+> ~262 KB); 26–36 KB tuned mbedTLS (**unreachable on the Arduino core**, T-0.6); ~14 KB asymmetric-content-len saving
+> (deferred to T-9.3); ~306 KB atlas (actual 258,992 B); ~20 B index stride (actual 22 B — cost 20 desynced lookups).
