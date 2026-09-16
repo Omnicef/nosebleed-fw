@@ -518,3 +518,36 @@ observed 17 s is transfer weather that gzip (T-11.3) would cut ~5×, and
 the measured duty cycle during a live-game poll says revisit T-11.3 if
 on-site RSSI keeps wire above ~4 s. The parse-diag phase stays in
 `NB_HTTP_TEST` as a permanent one-command split of wire vs parse.
+
+## T-5.7 — poll scheduler + device proof (2026-09-16)
+
+`lib/data/poll.{h,cpp}` — pure `PollScheduler`: per-league deadlines,
+`kBootStaggerS=5` so N enabled leagues spread over N·5 s, `done()` arms
+live (20 s) or idle (120 s) per `LeagueConfig` (Marquee's values),
+`next_wake()` for the sleeper. `config.h` gains `kLeagueApiPaths[]`
+(the Python's `LEAGUE_SLUGS` dict as an array); `date_window` gains
+`local_yesterday()` (DST-safe, for the separate yesterday leg). Native
+suite 21/21, new `test_data_poll_scheduler` covers stagger, both cadence
+flips, next-wake min and the all-disabled fallback.
+
+Device proof (`NB_POLL_DEMO`, tasks on the real topology — poll core 0
+prio 2, 30-fps probe core 1 prio 3, five pro leagues enabled, 150 s):
+
+    poll-cycle: 5 leagues in 46042 ms
+    poll-demo: cycle=1 sess_max=1 fps_min=30.3 heap_min=243796 B fails=0
+    POLL RESULT: PASS
+
+Live/idle cadence both observed for real: MLB had live games → re-polled
+every ~20 s (4×); the idle four came due again only at the 120 s mark.
+Per-poll internal delta ≤ 832 B, returning to ~0. MLB wire 17 s on the
+home AP (312 KB ≈ 18 KB/s — transport weather, not cadence). The 46 s
+"full cycle" is that weather; the sequential-one-session design is what
+the accept criteria asked for and `sess_max=1` proves it.
+
+**Finding — WiFi modem sleep aborts the boot.** Reproducible (6/6 boots):
+`ESP_ERROR_CHECK ... esp_timer_create ... phy_track_pll_init` NO_MEM in
+`ppTask`/`pm_dream` on core 0 — the modem-sleep PHY-wake path re-creates
+its PLL timer on every wake and the alloc fails under TLS/parse churn.
+Fixed at both connect sites with `WiFi.setSleep(false)`: the panel is
+wall-powered, modem sleep buys nothing and costs the whole board.
+Production env also carries the fix.

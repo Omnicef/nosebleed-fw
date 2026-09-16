@@ -20,6 +20,10 @@ namespace data {
 // False on bad input/cap.
 bool local_day(char* buf, size_t cap, time_t now);
 
+// Same, for the local calendar YESTERDAY (DST-safe via mktime) — the
+// separate single-day fetch T-5.7 uses for yesterday's finals.
+bool local_yesterday(char* buf, size_t cap, time_t now);
+
 // Marquee _filter_by_date: keep games whose LOCAL start date is yesterday
 // or today; start_utc == 0 (unparseable date — the Python stamps those
 // with now) is kept. Compacts list in place, returns the new count.

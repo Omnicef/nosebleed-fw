@@ -20,6 +20,7 @@
 #include "canvas.h"
 #include "cache.h"
 #include "date_window.h"
+#include "poll.h"
 #include "espn_json.h"
 #include "config.h"
 #include "game.h"
@@ -828,11 +829,52 @@ static void test_data_date_window(void) {
     const time_t dst_now = utc(2026, 3, 9, 6, 30);
     TEST_ASSERT_TRUE(local_day(day, sizeof day, dst_now));
     TEST_ASSERT_EQUAL_STRING("20260309", day);
+    // local_yesterday: plain day, DST night (23 h), and month boundary.
+    TEST_ASSERT_TRUE(local_yesterday(day, sizeof day, now));
+    TEST_ASSERT_EQUAL_STRING("20260613", day);
+    TEST_ASSERT_TRUE(local_yesterday(day, sizeof day, dst_now));
+    TEST_ASSERT_EQUAL_STRING("20260308", day);
+    const time_t month_edge = utc(2026, 3, 1, 14, 0);  // 09:00 EST Mar 1
+    TEST_ASSERT_TRUE(local_yesterday(day, sizeof day, month_edge));
+    TEST_ASSERT_EQUAL_STRING("20260228", day);
     list.count = 2;
     list.games[0].start_utc = utc(2026, 3, 8, 18, 0);  // Mar 8 afternoon EDT — keep
     list.games[1].start_utc = utc(2026, 3, 6, 18, 0);  // Mar 6 — drop
     TEST_ASSERT_EQUAL_INT(1, filter_yesterday_today(&list, dst_now));
     TEST_ASSERT_EQUAL_STRING("0", list.games[0].id);
+}
+
+static void test_data_poll_scheduler(void) {
+    using namespace nb::data;
+    PollScheduler sch;
+    const int64_t t0 = 1000000;
+
+    PollCfg live{true, 20, 120}, off{false, 20, 120};
+    for (int i = 0; i < PollScheduler::kLeagues; ++i) sch.set(i, off);
+    sch.set(0, live);
+    sch.set(5, live);
+    sch.reset(t0);
+
+    // Boot stagger: league 0 due now, league 5 five*5 s later; disabled never.
+    TEST_ASSERT_TRUE(sch.due(0, t0));
+    TEST_ASSERT_FALSE(sch.due(5, t0));
+    TEST_ASSERT_TRUE(sch.due(5, t0 + 5 * PollScheduler::kBootStaggerS));
+    sch.set(3, live);  // league 3 armed at t0+15
+    TEST_ASSERT_EQUAL_INT64(t0, sch.next_wake(t0));
+
+    // Idle cadence, then a live fetch flips to the live cadence.
+    sch.done(0, t0, false);
+    TEST_ASSERT_FALSE(sch.due(0, t0 + 119));
+    TEST_ASSERT_TRUE(sch.due(0, t0 + 120));
+    sch.done(0, t0 + 120, true);
+    TEST_ASSERT_TRUE(sch.due(0, t0 + 140));
+    TEST_ASSERT_EQUAL_INT64(t0 + 15, sch.next_wake(t0));  // league 3 leads
+
+    // All-disabled next_wake falls back to now (caller sleeps its floor).
+    sch.set(0, off);
+    sch.set(3, off);
+    sch.set(5, off);
+    TEST_ASSERT_EQUAL_INT64(t0 + 999, sch.next_wake(t0 + 999));
 }
 
 int main(void) {
@@ -857,5 +899,6 @@ int main(void) {
     RUN_TEST(test_data_filter_mlb);
     RUN_TEST(test_data_norm_golden);
     RUN_TEST(test_data_date_window);
+    RUN_TEST(test_data_poll_scheduler);
     return UNITY_END();
 }

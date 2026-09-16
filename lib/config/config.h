@@ -41,6 +41,14 @@ constexpr const char* kLeagueSlugs[kLeagueSlugCount] = {
     "womens-college-basketball", "mlb", "nhl", "epl",
 };
 
+// ESPN scoreboard API path per league slug (Marquee data/models.py
+// LEAGUE_SLUGS dict), same order as kLeagueSlugs.
+constexpr const char* kLeagueApiPaths[kLeagueSlugCount] = {
+    "football/nfl", "football/college-football", "basketball/nba",
+    "basketball/mens-college-basketball", "basketball/womens-college-basketball",
+    "baseball/mlb", "hockey/nhl", "soccer/eng.1",
+};
+
 // Panel geometry/wiring + boot + behaviour. Marquee HardwareSetting
 // (singleton row) minus Pi fields plus HUB75-DMA timing fields.
 struct HardwareSetting {

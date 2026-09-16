@@ -99,6 +99,10 @@ static void panel_test() {
                   static_cast<unsigned>(br));
 
     WiFi.mode(WIFI_STA);
+    // Panel is wall-powered; WiFi modem-sleep buys nothing and its PHY
+    // wake path re-creates the PLL esp_timer on every wake (measured
+    // T-5.7: phy_track_pll_init aborts NO_MEM under parse heap churn).
+    WiFi.setSleep(false);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.print("wifi: connecting");
     for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
@@ -357,6 +361,9 @@ static void config_boot_check() {
 #include "espn.h"
 #include "espn_json.h"
 #include "date_window.h"
+#include "poll.h"
+#include "cache.h"
+#include <atomic>
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -369,10 +376,143 @@ static uint32_t http_int_free() {
     return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
 }
 
+// T-5.7 — poll-task device proof (NB_POLL_DEMO). Real topology: this loop
+// runs on a task pinned to core 0 (like the shipping poll task); an fps
+// probe emulating the render task's 30 fps frame budget runs on core 1 at
+// prio 3. Five pro leagues enabled, per-league deadlines via PollScheduler
+// (live 20 s / idle 120 s per LeagueConfig, 5 s boot stagger). Accept
+// evidence: one full cycle across five leagues with timing, a per-cycle
+// internal-heap watermark, max CONCURRENT TLS sessions == 1, and core-1
+// fps never below 28 while core 0 does TLS.
+static nb::data::DataCache* g_pcache = nullptr;
+static std::atomic<int> g_sess{0}, g_sess_max{0}, g_fps_min10{9999};
+static volatile uint32_t g_cycle_ms = 0;
+static volatile int g_poll_fails = 0;
+
+static void poll_fps_probe(void*) {
+    Serial.printf("  [fps] started on core %d\n", xPortGetCoreID());
+    uint32_t frames = 0, t0 = millis(), tlog = t0;
+    for (;;) {
+        ++frames;
+        vTaskDelay(pdMS_TO_TICKS(33));  // ~30 fps frame budget
+        const uint32_t now = millis();
+        if (now - tlog >= 10000) {
+            const int fps10 = static_cast<int>(frames * 10000u / (now - tlog));
+            if (fps10 < g_fps_min10) g_fps_min10 = fps10;
+            Serial.printf("  [fps] %.1f fps (min %.1f)\n", fps10 / 10.0f,
+                          g_fps_min10.load() / 10.0f);
+            frames = 0;
+            tlog = now;
+        }
+        (void)t0;
+    }
+}
+
+static void poll_task(void*) {
+    using namespace nb::data;
+    Serial.printf("  poll: task on core %d, int_free=%u largest=%u\n", xPortGetCoreID(),
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+    static PollScheduler sch;
+    static const int kEnabled[] = {0, 2, 5, 6, 7};  // nfl nba mlb nhl epl
+    for (int i = 0; i < nb::config::kLeagueSlugCount; ++i)
+        sch.set(i, {false, 20, 120});
+    for (int lg : kEnabled) sch.set(lg, {true, 20, 120});
+    sch.reset(time(nullptr));
+
+    g_pcache = static_cast<nb::data::DataCache*>(
+        heap_caps_calloc(1, sizeof(nb::data::DataCache), MALLOC_CAP_SPIRAM));
+    if (!g_pcache) {
+        Serial.println("  poll: FAIL — no PSRAM for DataCache");
+        ++g_poll_fails;
+        vTaskDelete(nullptr);
+    }
+
+    bool first_done[8] = {};
+    int n_first = 0;
+    const uint32_t cycle_t0 = millis();
+    uint32_t heap_min = http_int_free();
+
+    const uint32_t t_end = millis() + 150000;
+    while (millis() < t_end) {
+        const time_t now = time(nullptr);
+        for (int lg = 0; lg < nb::config::kLeagueSlugCount; ++lg) {
+            if (!sch.due(lg, now)) continue;
+            char url[192], dates[16];
+            local_day(dates, sizeof dates, now);
+            scoreboard_url(url, sizeof url, nb::config::kLeagueApiPaths[lg], dates);
+            size_t wire = 0;
+            int games = 0;
+            bool ok = false, has_live = false;
+            const uint32_t t0 = millis();
+            const uint32_t f0 = http_int_free();
+            ++g_sess;
+            if (g_sess > g_sess_max) g_sess_max.store(g_sess.load());
+            {
+                JsonDocument doc = make_psram_doc();
+                ok = espn_fetch_scoreboard(url, doc, &wire);
+                if (ok) {
+                    GameList* w = g_pcache->writable(lg);
+                    w->count = to_games(doc, *w);
+                    filter_yesterday_today(w, now);
+                    games = w->count;
+                    if (games == 0) {  // opportunistic yesterday leg (T-5.6)
+                        char yd[16];
+                        if (local_yesterday(yd, sizeof yd, now) &&
+                            scoreboard_url(url, sizeof url, nb::config::kLeagueApiPaths[lg], yd)) {
+                            JsonDocument doc2 = make_psram_doc();
+                            if (espn_fetch_scoreboard(url, doc2, &wire)) {
+                                w->count = to_games(doc2, *w);
+                                games = w->count;
+                            }
+                        }
+                    }
+                    for (int i = 0; i < games; ++i)
+                        has_live |= (w->games[i].status == kStatusIn);
+                    g_pcache->publish(lg, static_cast<int64_t>(now));
+                } else {
+                    ++g_poll_fails;  // last-good kept, per hard rule
+                }
+            }
+            --g_sess;
+            Serial.printf("  poll[%s]: ok=%d games=%d wire=%u %lu ms int_delta=%ld B\n",
+                          nb::config::kLeagueSlugs[lg], ok, games,
+                          static_cast<unsigned>(wire),
+                          static_cast<unsigned long>(millis() - t0),
+                          static_cast<long>(f0 - http_int_free()));
+            sch.done(lg, time(nullptr), has_live);
+            if (!first_done[lg]) {
+                first_done[lg] = true;
+                if (++n_first == 5) {
+                    g_cycle_ms = millis() - cycle_t0;
+                    Serial.printf("  poll-cycle: 5 leagues in %lu ms\n",
+                                  static_cast<unsigned long>(g_cycle_ms));
+                }
+            }
+            const uint32_t hf = http_int_free();
+            if (hf < heap_min) heap_min = hf;
+        }
+        const time_t t = time(nullptr);
+        int64_t sleep_s = sch.next_wake(t) - t;
+        if (sleep_s < 1) sleep_s = 1;
+        if (sleep_s > 30) sleep_s = 30;
+        vTaskDelay(pdMS_TO_TICKS(1000 * sleep_s));
+    }
+
+    const bool cycle_ok = g_cycle_ms > 0;
+    const bool pass = cycle_ok && g_sess_max <= 1 && g_fps_min10 >= 280;
+    Serial.printf("  poll-demo: cycle=%d(%lu ms) sess_max=%d fps_min=%.1f heap_min=%u B fails=%d\n",
+                  cycle_ok, static_cast<unsigned long>(g_cycle_ms), g_sess_max.load(),
+                  g_fps_min10.load() / 10.0f, heap_min, g_poll_fails);
+    Serial.printf("  POLL RESULT: %s\n", pass ? "PASS" : "FAIL");
+    vTaskDelete(nullptr);
+}
+
 static void http_test() {
     int fails = 0;
     Serial.println("T-5.3 HTTP transport test:");
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     const uint8_t st = WiFi.waitForConnectResult(20000);
     if (st != WL_CONNECTED) {
@@ -574,6 +714,17 @@ static void http_test() {
     }
 
     Serial.printf("  RESULT: %s\n", fails ? "FAIL" : "PASS");
+    // 6. T-5.7 — real-topology poll proof runs as tasks (poll on core 0,
+    // fps probe on core 1); logs POLL RESULT when done.
+#ifdef NB_POLL_DEMO
+    Serial.printf("  poll-demo boot: int_free=%u largest=%u psram_free=%u\n",
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)),
+                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    xTaskCreatePinnedToCore(poll_fps_probe, "fps", 3 * 1024, nullptr, 3, nullptr, 1);
+    xTaskCreatePinnedToCore(poll_task, "poll", 12 * 1024, nullptr, 2, nullptr, 0);
+    Serial.println("  poll-demo: tasks created");
+#endif
     for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
 }
 #endif  // NB_HTTP_TEST

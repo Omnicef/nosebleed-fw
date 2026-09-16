@@ -21,6 +21,19 @@ bool local_day(char* buf, size_t cap, time_t now) {
     return n > 0 && static_cast<size_t>(n) < cap;
 }
 
+bool local_yesterday(char* buf, size_t cap, time_t now) {
+    struct tm t;
+    if (!localtime_r(&now, &t) || cap < 9) return false;
+    t.tm_mday -= 1;  // mktime normalises across month and DST
+    t.tm_isdst = -1;
+    const time_t y = mktime(&t);
+    struct tm yt;
+    if (!localtime_r(&y, &yt)) return false;
+    const int n = snprintf(buf, cap, "%04ld%02d%02d", yt.tm_year + 1900L, yt.tm_mon + 1,
+                           yt.tm_mday);
+    return n > 0 && static_cast<size_t>(n) < cap;
+}
+
 int filter_yesterday_today(GameList* list, time_t now) {
     struct tm t;
     if (!localtime_r(&now, &t)) return list->count;  // no TZ yet — keep everything
