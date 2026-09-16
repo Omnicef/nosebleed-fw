@@ -248,3 +248,19 @@ clkphase, latch_blanking, i2sspeed, double_buff). `reserved` deliberately
 excluded. Native 11/11; caught two self-inflicted traps on the way (Config
 vs Config.hw at the call site; default `lsb_msb_transition_bit` is already
 1 — the "change" test must use 0).
+
+## T-4.5 — IANA→POSIX timezone table (2026-09-16)
+
+`tools/build_tzmap.py` samples 2026 tzdata transitions per zone and emits
+`lib/config/tzmap.h`: 484 zones, 10,871 B (< 20 KB budget), deduped name +
+posix pools, binary-search lookup, static_assert on size. Header committed
+so device and CI agree regardless of builder's tzdata.
+Accept cases: `America/New_York` → `EST5EDT,M3.2.0,M11.1.0` **exact**;
+`Australia/Sydney` → `AEST-10AEDT,M10.1.0,M4.1.0/3` (southern hemisphere).
+Findings: this box's tzdata makes **America/Vancouver permanently MST(-7)
+from Nov 2026** (BC adopted permanent DST) — one transition, never back, so
+the tool detects "settled to fixed offset" zones and emits `MST7` instead of
+an impossible M-rule. Numeric abbreviations ("+03", Chile's "-03") aren't
+valid POSIX names → `XXX` (offset preserved; the clock only needs the
+offset). Rule time is `t + prev_offset` — using `t-1` produced a system-
+atic `/1:59` off-by-one. Native 12/12.

@@ -13,6 +13,7 @@
 
 #include "canvas.h"
 #include "config.h"
+#include "tzmap.h"
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
@@ -367,6 +368,22 @@ static void test_config_structural_change(void) {
     b = a; b.hw.double_buff = 1 - a.hw.double_buff;   TEST_ASSERT_TRUE(hw_structural_changed(a.hw, b.hw));
 }
 
+// T-4.5: generated IANA->POSIX table. NY exact string is the PLAN accept
+// case; Sydney proves the southern-hemisphere rule survives the round trip.
+static void test_config_tzmap(void) {
+    using namespace nb::config;
+    TEST_ASSERT_EQUAL_STRING("EST5EDT,M3.2.0,M11.1.0", tz_lookup("America/New_York"));
+    TEST_ASSERT_EQUAL_STRING("AEST-10AEDT,M10.1.0,M4.1.0/3", tz_lookup("Australia/Sydney"));
+    TEST_ASSERT_EQUAL_STRING("UTC0", tz_lookup("UTC"));
+    TEST_ASSERT_NULL(tz_lookup("Mars/Olympus_Mons"));
+    TEST_ASSERT_NULL(tz_lookup(""));
+    TEST_ASSERT_NULL(tz_lookup(nullptr));
+    // binary search guard: table must be strcmp-sorted
+    for (size_t i = 1; i < kTzCount; i++)
+        TEST_ASSERT_TRUE(std::strcmp(kTzNamePool + kTzTable[i - 1].name_off,
+                                     kTzNamePool + kTzTable[i].name_off) < 0);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -380,5 +397,6 @@ int main(void) {
     RUN_TEST(test_config_defaults);
     RUN_TEST(test_config_validate);
     RUN_TEST(test_config_structural_change);
+    RUN_TEST(test_config_tzmap);
     return UNITY_END();
 }
