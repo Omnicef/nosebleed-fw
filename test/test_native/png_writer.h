@@ -6,8 +6,11 @@
 
 #pragma once
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <sys/stat.h>
 #include <vector>
 
 namespace nb {
@@ -48,8 +51,19 @@ inline uint32_t adler32(const std::vector<uint8_t>& d) {
     return (b << 16) | a;
 }
 
-// rgb: w*h*3 bytes, row-major. Returns true on success.
+// rgb: w*h*3 bytes, row-major. Returns true on success. Creates the parent
+// directory — test/out/ is gitignored, so a fresh clone has nothing (POSIX
+// mkdir, EEXIST ignored; host-only code, purity rule doesn't apply to test/).
 inline bool write_png_rgb(const char* path, int w, int h, const uint8_t* rgb) {
+    const char* slash = std::strrchr(path, '/');
+    if (slash) {
+        char dir[256];
+        const size_t n = static_cast<size_t>(slash - path);
+        if (n >= sizeof(dir)) return false;
+        std::memcpy(dir, path, n);
+        dir[n] = '\0';
+        if (mkdir(dir, 0775) != 0 && errno != EEXIST) return false;
+    }
     std::vector<uint8_t> raw;
     const size_t stride = static_cast<size_t>(w) * 3;
     raw.reserve((stride + 1) * h);
