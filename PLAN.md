@@ -67,12 +67,16 @@ logos.bin
 └── blobs     RGB565 pixels (w*h*2 B) + 1-bit alpha mask (w*h/8 B)
 ```
 
-Per logo at 32 px: 2048 B colour + 128 B mask = **2176 B (~2.1 KB)**.
+Worst case at 32 px (a full 32×32 square): 2048 B colour + 128 B mask = 2176 B. **Measured average is ~1.8 KB**
+across the 50-logo corpus at T-3.1 — most marks are narrower than they are tall, so after the `getbbox()` trim and
+resize-to-height the width is usually under 32.
 
-| Scope | Teams | Size |
-|---|---|---|
-| NFL + NBA + MLB + NHL + EPL | 144 | **~306 KB** |
-| + college FB, MCBB, WCBB | ~1,000 | ~2.08 MB |
+| Scope | Teams | Projected @ 2.1 KB | **Measured @ ~1.8 KB** |
+|---|---|---|---|
+| NFL + NBA + MLB + NHL + EPL | 144 | ~306 KB | **~260 KB** |
+| + college FB, MCBB, WCBB | ~1,000 | ~2.08 MB | ~1.8 MB |
+
+Comfortably inside the 2 MB `logos` partition either way.
 
 Mapped with `esp_partition_mmap()` and read directly — no decode, no RAM copy, no warm/cold cache distinction. Flash reads go through the cache, so a miss costs a real SPI read: **keep logo access in strip rebuilds, never in the per-frame path.**
 
@@ -305,7 +309,7 @@ This phase builds the foundation everything visual sits on, **and the test harne
 **T-3.1 — `tools/build_logos.py`.** Port the *processing* half of the Python's `logo_pipeline.py` — unchanged Pillow logic: `getbbox()` trim → LANCZOS resize to target height → alpha threshold at 128 → UnsharpMask + saturation/contrast boost. Fetch team lists from ESPN's `/teams` endpoint per league.
 *Accept:* produces the same processed images the Python caches today, for a sample of 10 teams.
 
-**T-3.2 — `logos.bin` writer.** Emit the §3 format. Index sorted by `(league, abbr)` for binary search. **Key by league+abbreviation** — the Python has a fix specifically for cross-league abbreviation collisions (`eng.1_liv` vs `epl_liv`); preserve that.
+**T-3.2 — `logos.bin` writer.** Emit the §3 format. Index sorted by `(league, abbr)` for binary search. **Key by league+abbreviation** — the Python has a fix specifically for cross-league abbreviation collisions (`eng.1_liv` vs `epl_liv`); preserve that. **Quantified at T-3.2: a bare-abbreviation key silently drops 11 of the 50 test logos**, because duplicate EPL slugs share abbreviations. Silently — no error, just missing art.
 *Accept:* round-trips through a Python reader; index lookup returns correct offsets.
 
 **T-3.3 — Generate the pro-league atlas.** NFL, NBA, MLB, NHL, EPL.
