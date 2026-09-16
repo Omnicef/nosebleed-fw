@@ -352,6 +352,7 @@ static void config_boot_check() {
 // delta must be ~0 — that is the "never leaks a session" measurement.
 #include <WiFi.h>
 #include "http.h"
+#include "espn.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -440,6 +441,37 @@ static void http_test() {
         if (d > 1024 || d < -1024) {
             ++fails;
             Serial.println("    FAIL: session heap not reclaimed (leak)");
+        }
+    }
+
+    // 3. T-5.4 — filtered ESPN client on the live stream: ReadBufferingStream
+    // (512 B, never exercised in the spike) feeding filter + NestingLimit(20)
+    // parse. TLS session is already closed here, so the internal delta is the
+    // parse alone and must be ~0 — the doc is PSRAM, the buffer is 512 B.
+    {
+        char url[160];
+        if (!nb::data::scoreboard_url(url, sizeof url, "baseball/mlb")) ++fails;
+        auto doc = nb::data::make_psram_doc();
+        const uint32_t f0 = http_int_free(), t0 = millis();
+        const bool ok = nb::data::espn_fetch_scoreboard(url, doc);
+        const int32_t d = static_cast<int32_t>(f0 - http_int_free());
+        Serial.printf("  espn: ok=%d events=%u kept=%u B internal_delta=%ld B elapsed=%lu ms\n",
+                      ok,
+                      ok ? static_cast<unsigned>(doc["events"].size()) : 0u,
+                      ok ? static_cast<unsigned>(measureJson(doc)) : 0u,
+                      static_cast<long>(d), static_cast<unsigned long>(millis() - t0));
+        if (!ok) {
+            ++fails;
+            Serial.println("    FAIL: filtered MLB fetch");
+        } else {
+            Serial.printf("    spot: id=%s state=%s away=%s\n",
+                          doc["events"][0]["id"].as<const char*>(),
+                          doc["events"][0]["competitions"][0]["status"]["type"]["state"].as<const char*>(),
+                          doc["events"][0]["competitions"][0]["competitors"][0]["team"]["abbreviation"].as<const char*>());
+            if (d > 2048) {
+                ++fails;
+                Serial.println("    FAIL: parse internal delta > 2 KB — filter/allocator wrong");
+            }
         }
     }
 

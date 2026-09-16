@@ -1,0 +1,108 @@
+{
+  "events": [
+    {
+      "id": "401671842",
+      "uid": "s:20~l:28~e:401671842",
+      "date": "2025-09-07T17:00Z",
+      "name": "Kansas City Chiefs at Baltimore Ravens",
+      "shortName": "KC @ BAL",
+      "season": {
+        "year": 2025,
+        "type": 2,
+        "slug": "regular-season"
+      },
+      "competitions": [
+        {
+          "id": "401671842",
+          "uid": "s:20~l:28~e:401671842~c:401671842",
+          "date": "2025-09-07T17:00Z",
+          "attendance": 71008,
+          "type": {
+            "id": "1",
+            "abbreviation": "STD"
+          },
+          "timeValid": true,
+          "neutralSite": false,
+          "conferenceCompetition": false,
+          "playByPlayAvailable": true,
+          "recent": true,
+          "wasSuspended": false,
+          "status": {
+            "clock": 392.0,
+            "displayClock": "6:32",
+            "period": 2,
+            "type": {
+              "id": "2",
+              "name": "STATUS_IN_PROGRESS",
+              "state": "in",
+              "completed": false,
+              "description": "In Progress",
+              "detail": "2nd Quarter, 6:32",
+              "shortDetail": "Q2 6:32"
+            }
+          },
+          "competitors": [
+            {
+              "id": "33",
+              "uid": "s:20~l:28~t:33",
+              "type": "team",
+              "order": 0,
+              "homeAway": "home",
+              "winner": false,
+              "team": {
+                "id": "33",
+                "uid": "s:20~l:28~t:33",
+                "location": "Baltimore",
+                "name": "Ravens",
+                "abbreviation": "BAL",
+                "displayName": "Baltimore Ravens",
+                "shortDisplayName": "Ravens",
+                "color": "241773",
+                "alternateColor": "000000",
+                "isActive": true,
+                "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/bal.png"
+              },
+              "score": "10",
+              "statistics": []
+            },
+            {
+              "id": "12",
+              "uid": "s:20~l:28~t:12",
+              "type": "team",
+              "order": 1,
+              "homeAway": "away",
+              "winner": false,
+              "team": {
+                "id": "12",
+                "uid": "s:20~l:28~t:12",
+                "location": "Kansas City",
+                "name": "Chiefs",
+                "abbreviation": "KC",
+                "displayName": "Kansas City Chiefs",
+                "shortDisplayName": "Chiefs",
+                "color": "e31837",
+                "alternateColor": "ffb612",
+                "isActive": true,
+                "logo": "https://a.espncdn.com/i/teamlogos/nfl/500/kc.png"
+              },
+              "score": "7",
+              "statistics": []
+            }
+          ],
+          "situation": {
+            "down": 3,
+            "distance": 7,
+            "yardLine": 35,
+            "possession": {"id": "12"},
+            "isRedZone": false,
+            "homeTimeouts": 3,
+            "awayTimeouts": 2,
+            "shortDownDistanceText": "3rd & 7",
+            "possessionText": "Kansas City Chiefs"
+          }
+        }
+      ],
+      "links": []
+    }
+  ]
+}

@@ -428,3 +428,34 @@ date-window narrowing (T-5.6) matters for every league, not just MLB.
 project's own `.pio/libdeps`. Deps added: ArduinoJson 7.4.3 (registry) +
 StreamUtils 1.9.2 — **not resolvable from the registry**, pinned by v1.9.2
 commit hash in `lib_deps`; licence doc updated. esp32s3 + httptest both build.
+
+## T-5.4 — filter documents (2026-09-16)
+
+Split the decoder from the transport: `espn_json.{h,cpp}` (framework-free —
+ArduinoJson + game.h only) carries `build_scoreboard_filter()` and
+`parse_scoreboard()`, which bakes in **NestingLimit(20)** on every call so no
+caller can forget it; `espn.{h,cpp}` (device) adds `scoreboard_url()`,
+`make_psram_doc()` (official `SpiRamAllocator`, `reallocate` override
+included) and `espn_fetch_scoreboard()` = `http_get` →
+`ReadBufferingStream(s, 512)` → filtered parse. The `.cpp` transport body is
+`#if defined(ARDUINO)`-guarded because the chain LDF compiles every source in
+a used lib dir — native builds the decoder, never the sockets. Filter fields
+= Marquee `norm_game`'s reads exactly, plus `team.name` (its displayName
+fallback — the spike's filter missed it; that is +1 key of retention).
+Array-filter semantics verified in the installed `JsonDeserializer.hpp`:
+elements resolve their filter via `filter[0UL]`, i.e. the `[0]` element is the
+template for every element. `DeserializationError` has no `UnknownError` in
+v7 (enum is Ok/EmptyInput/IncompleteInput/InvalidInput/NoMemory/TooDeep) —
+first esp32s3 build caught it; native never parses that file.
+Fixtures copied from the Python into `test/fixtures/` (six files, 1.77 MB —
+was T-5.5 prep, landed here because the filter test needs one).
+Accept — host: filtered parse of `mlb_scoreboard.json` via `std::istream`
+retains **6,742 B raw of 1,457,268** (limit 8 KB), 15 events, `venue`/`odds`
+provably gone; native 18/18. Device (httptest phase 3, live MLB off TLS):
+ok, 15 events, 6,916 B kept, **internal heap delta -156 B across the whole
+fetch+parse** — the parse costs what it should: nothing internal; first game
+spot-checked `id=401816960 state=pre away=CLE`. Elapsed 9.8 s unfiltered
+(full default date window) — expected pre-T-5.6, and today's NFL leg also ran
+50 s for the same 280,458 B as T-5.3's 8.7 s: wire time is network-weather,
+T-5.6's measurement must be taken over several runs. `ReadBufferingStream`
+was unexercised in the spike — it ran here, on a real stream. RESULT: PASS.

@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <ctime>
 #include <type_traits>
 #include <atomic>
@@ -18,6 +19,7 @@
 
 #include "canvas.h"
 #include "cache.h"
+#include "espn_json.h"
 #include "config.h"
 #include "game.h"
 #include "timezone.h"
@@ -678,6 +680,33 @@ static void test_data_cache_stress(void) {
     }
 }
 
+// T-5.4 — filter + NestingLimit(20) proof on the exact code the device
+// parses with. Fixtures are the Marquee corpus (never read whole by humans).
+static void test_data_filter_mlb(void) {
+    using namespace nb::data;
+    std::ifstream f("test/fixtures/mlb_scoreboard.json");
+    TEST_ASSERT_TRUE_MESSAGE(f.is_open(), "test/fixtures/mlb_scoreboard.json missing");
+
+    JsonDocument filter;
+    build_scoreboard_filter(filter);
+    JsonDocument doc;  // host: default allocator (device: SpiRam, same code)
+    const DeserializationError err = parse_scoreboard(f, filter, doc);
+    TEST_ASSERT_FALSE_MESSAGE(static_cast<bool>(err), err.c_str());
+
+    const size_t kept = measureJson(doc);
+    std::printf("  mlb_scoreboard: %lu events, %lu B kept of 1457268 (NestingLimit 20 held)\n",
+                (unsigned long)doc["events"].size(), (unsigned long)kept);
+    TEST_ASSERT_EQUAL_UINT(15, doc["events"].size());
+    TEST_ASSERT_TRUE_MESSAGE(kept > 0 && kept <= 8192, "filtered doc must retain <= 8 KB");
+
+    // retained fields present, bulk of the payload provably gone
+    TEST_ASSERT_TRUE(doc["events"][0]["id"].is<const char*>());
+    TEST_ASSERT_TRUE(doc["events"][0]["competitions"][0]["status"]["type"]["state"].is<const char*>());
+    TEST_ASSERT_TRUE(doc["events"][0]["competitions"][0]["competitors"][0]["team"]["abbreviation"].is<const char*>());
+    TEST_ASSERT_TRUE(doc["events"][0]["competitions"][0]["venue"].isNull());
+    TEST_ASSERT_TRUE(doc["events"][0]["competitions"][0]["odds"].isNull());
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -697,5 +726,6 @@ int main(void) {
     RUN_TEST(test_data_structs);
     RUN_TEST(test_data_cache_basic);
     RUN_TEST(test_data_cache_stress);
+    RUN_TEST(test_data_filter_mlb);
     return UNITY_END();
 }
