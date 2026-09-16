@@ -37,28 +37,44 @@ ESP32-S3 firmware rewrite of the `Marquee` Python project. Phased build plan wit
 
 ---
 
-## §2 The central risk: ESPN payload size
+## §2 ESPN payload — the risk that evaporated
 
-Measured from the Python's own fixtures:
+**Superseded by measurement at T-5.6. Kept because the reasoning shaped the architecture.**
 
-| Fixture | Size | Events | Per event |
-|---|---|---|---|
-| `mlb_scoreboard.json` | **1,457,268 B** | 15 | ~97 KB |
-| `epl_scoreboard.json` | 220,171 B | 10 | ~22 KB |
-| `nhl_scoreboard.json` | 69,084 B | 1 | ~69 KB |
-| `nba_scoreboard.json` | 61,369 B | 1 | ~61 KB |
-| `mlb_live.json` | 48,492 B | 1 | ~48 KB |
-| `nfl_live.json` | 3,213 B | 1 | ~3 KB |
+The plan was built around a 1,457,268 B MLB fixture (15 events, ~97 KB each) captured from a
+`dates=yesterday-tomorrow` request. That framing drove the gate, the filter, the buffering and the whole of
+Phase 0. Two things turned out to be false.
 
-ESPN embeds full team records, venue, odds, broadcast listings, leaders and headlines per event. We extract roughly **300 bytes per game**.
+**ESPN no longer serves multi-day windows.** `dates=YYYYMMDD-YYYYMMDD` and comma-separated lists both return
+**400** (verified on-device, T-5.6). Only single days work — and the default window is already one day. So the
+1.46 MB three-day payload cannot be requested any more, by us or by anyone.
 
-Filtering solves the memory problem (~4.5 KB retained from 1.46 MB) but **not** the transfer problem — the bytes still cross the TLS socket. At ~300–600 KB/s that is 3–6 s per MLB poll. Mitigations, in order of value:
+**The live single-day payload is ~298 KB**, five times smaller than the fixture the entire risk analysis assumed.
 
-1. **Narrow the date window** (T-5.6) — **REQUIRED.** The Python requests `yesterday-tomorrow`; three days of MLB is most of that 1.46 MB. ~3× reduction. Hardware measured **6,081 ms unmitigated against a < 6 s budget**, so this is the mitigation the gate's GO verdict assumed, not an optional speed-up.
-2. **Buffer the stream** (T-5.3). `deserializeJson()` reads a `Stream` **one byte at a time** by default. Wrap it in `ReadBufferingStream` (StreamUtils) with a 512–1024 B chunk — the ArduinoJson docs cite ~20× faster reads. Without this, the 1.46 MB response is byte-by-byte over TLS.
-3. **Stagger league polls** (T-5.7). Never concurrent.
-4. **Pin `poll` to core 0** (T-1.5). Non-negotiable.
-5. **gzip via streaming miniz** (T-11.3). Another 3–5×, but real complexity. Deferred until measured need. Until then send `Accept-Encoding: identity` explicitly so we never receive a body we cannot inflate.
+**And the parse was never the bottleneck.** A filtered parse of 298 KB costs **90 ms**, identical across every
+allocator arrangement. The 6,081 ms that made T-0.5 read as an at-budget near-miss was **almost entirely wire
+time**, which swings 1.35–6.7 s on identically-sized payloads. Best case measured 2.8 s, comfortably under the
+6 s budget.
+
+What survives from the original analysis:
+
+- **Filtering is still right.** ~300 B retained per game out of 298 KB, and it costs 90 ms. No reason to stop.
+- **`ReadBufferingStream` is still right.** Byte-at-a-time reads off TLS remain slow regardless of payload size.
+- **Sequential polls, one TLS session** — unchanged, driven by memory not payload.
+- **`NestingLimit(20)`** — unchanged and still mandatory.
+
+What changed:
+
+- **T-5.6 is no longer "narrow the window".** There is nothing to narrow. It became: single-day is the only
+  option ESPN offers, and yesterday's finals require a **separate single-day fetch**, merged by
+  `filter_yesterday_today`.
+- **T-11.3 (gzip) is now conditional on wire time only** — reach for it if on-site transport stays above 4 s,
+  not because of payload size.
+- **The date-window mitigation is gone from the risk register.** Transport variance replaces it as the timing
+  risk, and it is a network property we cannot optimise away.
+
+> **Note for the Python predecessor:** Marquee issues exactly the `dates=yesterday-tomorrow` request ESPN now
+> rejects. It is broken upstream and needs the same single-day + separate-yesterday treatment.
 
 ---
 
@@ -562,7 +578,9 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 
 | Risk | Phase | Severity | Mitigation |
 |---|---|---|---|
-| MLB payload too slow even filtered | 0 | **Fatal** | T-0.5 gate before any other work; T-5.6 date narrowing; T-11.3 gzip |
+| ~~MLB payload too slow even filtered~~ | 0 | **Closed** | Payload is ~298 KB not 1.46 MB; parse is 90 ms. Risk did not exist. |
+| Wire-time variance (1.35–6.7 s on identical payloads) | 5 | Low | Not optimisable — a network property. T-11.3 gzip only if on-site transport stays >4 s. |
+| ESPN changes its API shape without notice | any | **Medium→High** | Already happened once: multi-day windows removed mid-build. Filters degrade gracefully; fixtures catch drift in CI; expect more. |
 | Pixel parity unachievable with the font blitter | 2 | High | T-2.7 checkpoint before building 10 widgets |
 | mbedTLS settings ignored on Arduino core | 0/9 | Medium | Known issue; pull the T-9.3 IDF conversion forward if T-0.6 shows no effect |
 | Torn reads in `DataCache` | 5 | Medium | Pointer swap, T-5.2 stress test |
@@ -586,11 +604,14 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 | `esp_partition_mmap()` one-time cost | ~104 B page tables; per-lookup **0 B** | M |
 | PSRAM total use | < 400 KB of 8 MB | P |
 | **Payload and timing** | | |
-| MLB scoreboard fixture | 1,457,268 B / 15 events / ~97 KB per event | M |
+| **Live MLB payload, single day** | **~298 KB** — multi-day windows now 400 (T-5.6) | M |
+| **Filtered parse of 298 KB** | **90 ms** — the parse was never the bottleneck | M |
+| **Fetch+parse wall clock** | **1.35–6.7 s, transport-dominated**; best case 2.8 s | M |
+| MLB scoreboard fixture (historical, 3-day window ESPN no longer serves) | 1,457,268 B / 15 events | M |
 | Retained after filtering (fixture) | 5,676 B raw / 10.5 KB PSRAM | W |
 | Retained after filtering (live, `situation` present) | 24.5 KB PSRAM | M |
 | Filtered parse cost, internal | 1.6 KB (from memory, W) / **13.1 KB** (off TLS, M) | M |
-| **Fetch + parse elapsed, unmitigated** | **6,081 ms against a < 6 s budget** — T-5.6 required | M |
+| Fetch + parse, T-0.5 single sample | 6,081 ms — **misattributed to parse; it was wire time** | M |
 | ESPN JSON nesting depth | **15** — `NestingLimit(20)` mandatory, default 10 fails | M |
 | All fixtures | 6 files, 1.77 MB | M |
 | **Assets** | | |
