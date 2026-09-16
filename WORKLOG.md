@@ -580,3 +580,24 @@ x 180 s = ~0.9 expected overlaps), hence the max-rate hammer phase.
 Two harness bugs fixed en route: a prio-3 hammer reader must yield
 *unconditionally* (retry storm starved the core-1 monitor), and the
 stress loop needs a fixed end anchor.
+
+## T-5.9 — Phase 5 close (2026-09-16)
+
+Phase 5 (data layer) is done and device-proven:
+- `Game`/`GameList`/`Situation` PODs, `DataCache` seqlock (T-5.2) with
+  the stress test re-run on Xtensa hardware (`env:cachetest`,
+  ac84c60): control bites in 57 ms, max-rate hammer 49 retries / 0 torn,
+  real-cadence 180 s run 5455 snapshots / 0 torn, reader tracks
+  publishes to the last one.
+- `esp_http_client` + `esp_crt_bundle` transport with jittered backoff,
+  `ReadBufferingStream`, filtered ArduinoJson v7 parse with
+  `NestingLimit(20)`; ESPN single-day reality + separate yesterday leg
+  (T-5.3–T-5.6); live poll ~298 KB, filtered parse ~90 ms, fetch time
+  is wire weather.
+- `PollScheduler` on the real task topology with both cadences observed
+  on device, `sess_max=1`, PASS (T-5.7).
+- Fixture corpus: 6/6 byte-identical to Marquee, all parsed in CI (T-5.8).
+- Boot-loop diagnosis (`phy_track_pll_init` abort under WiFi modem
+  sleep → `WiFi.setSleep(false)`, production) and its follow-up: the
+  Phase 0 "1-in-3 silent boot" finding is resolved by the same fix —
+  18/18 clean EN resets after (SPIKE_RESULTS amended).
