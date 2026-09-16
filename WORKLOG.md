@@ -364,3 +364,15 @@ output, clean loop.
 Both hardware faults closed on the panel; deferred set (T-0.2 was already
 closed at spike level with the caveat above) empty; purity clean; native
 14/14; esp32s3 + paneltest builds green. Phase 2 complete.
+
+## T-5.1 — data structs (2026-09-16)
+
+`lib/data/game.h`: `Team`/`Situation`/`Game`/`GameList` POD mirrors of
+Marquee's models.py dataclasses. Fixed `char[]` everywhere, `int16_t` with
+`kNoInt` (INT16_MIN) for every Python `Optional[int]`, `Status` enum for the
+state string. Two Python fields dropped on purpose: per-Game `league` (the
+cache slot *is* the league tag) and `logo_url` (logos come from the atlas by
+league+abbr, never a URL). `copy_str` truncates, never leaves unterminated,
+nullptr-safe. `static_assert` trivially-copyable — the cache memcpy's whole
+GameLists. Measured: Game=224 B, GameList=3600 B (16 games), whole DataCache
+(8 leagues × 2 buffers) = 57.6 KB PSRAM. Native 14/14.

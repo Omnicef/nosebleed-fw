@@ -11,9 +11,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <type_traits>
 
 #include "canvas.h"
 #include "config.h"
+#include "game.h"
 #include "timezone.h"
 #include "tzmap.h"
 #include "font.h"
@@ -465,6 +467,44 @@ static void test_config_timezone(void) {
     TEST_ASSERT_EQUAL_INT(14, t.tm_mday);  // June 14 22:00 EDT
 }
 
+// T-5.1: POD data structs. Fixed-size, memcpy-able, sentinel optionals —
+// the shape the pointer-swap cache publishes whole.
+static void test_data_structs(void) {
+    using namespace nb::data;
+    // POD: the cache memcpy's GameList wholesale.
+    static_assert(std::is_trivially_copyable<GameList>::value, "GameList must stay trivially copyable");
+    static_assert(std::is_trivially_copyable<Game>::value, "Game must stay trivially copyable");
+    static_assert(std::is_trivially_copyable<Situation>::value, "");
+    static_assert(std::is_trivially_copyable<Team>::value, "");
+
+    // Budget: whole DataCache (8 leagues x 2 buffers) must stay PSRAM-small.
+    std::printf("  sizeof Team=%zu Game=%zu GameList=%zu  cache=%zu B\n", sizeof(Team),
+                sizeof(Game), sizeof(GameList), sizeof(GameList) * 2 * 8);
+    TEST_ASSERT_EQUAL_UINT(60, sizeof(Team));
+    TEST_ASSERT_TRUE(sizeof(GameList) * 2 * 8 < 128u * 1024);
+
+    Game g = {};
+    g.period = kNoInt;
+    g.away_score = kNoInt;
+    TEST_ASSERT_EQUAL_INT(INT16_MIN, g.away_score);  // the None sentinel
+    copy_str(g.id, sizeof g.id, "40123456789012345678");  // over-long: truncates, stays terminated
+    TEST_ASSERT_EQUAL_UINT(15, static_cast<unsigned>(std::strlen(g.id)));
+    copy_str(g.status_display, sizeof g.status_display, "Top 3rd");
+    TEST_ASSERT_EQUAL_STRING("Top 3rd", g.status_display);
+    copy_str(g.clock, sizeof g.clock, nullptr);  // missing field -> "", never crash
+    TEST_ASSERT_EQUAL_STRING("", g.clock);
+
+    // Whole-list copy is a real value copy (render snapshots this way).
+    GameList a = {};
+    a.count = 2;
+    a.fetched_utc = 1234567890;
+    copy_str(a.games[1].home.abbr, sizeof(a.games[1].home.abbr), "LAL");
+    GameList b = a;
+    copy_str(a.games[1].home.abbr, sizeof(a.games[1].home.abbr), "BOS");
+    TEST_ASSERT_EQUAL_STRING("LAL", b.games[1].home.abbr);
+    TEST_ASSERT_EQUAL_INT(1234567890, (int)b.fetched_utc);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -481,5 +521,6 @@ int main(void) {
     RUN_TEST(test_config_structural_change);
     RUN_TEST(test_config_tzmap);
     RUN_TEST(test_config_timezone);
+    RUN_TEST(test_data_structs);
     return UNITY_END();
 }
