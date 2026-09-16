@@ -137,9 +137,12 @@ def font_block(ident: str, fd: FontDef, cells: dict[int, list[int]]) -> str:
     for code in range(FIRST, LAST + 1):
         rows = cells[code]
         body = ",".join(f"0x{(rows[r] if r < len(rows) else 0) & 0xFF:02X}" for r in range(MAX_ROWS))
-        disp = chr(code) if 32 < code < 127 else ("sp" if code == 32 else "?")
-        if disp == "\\":
-            disp = "bs"  # trailing backslash would splice the next line into this // comment
+        # Comment labels are display-only. Keep them alphanumeric-only: a raw
+        # backslash at end of line is a C line-continuation that would splice
+        # (and thus delete) the next glyph's initializer; other punctuation is
+        # only harmless in a // comment but this removes the whole class.
+        c = chr(code)
+        disp = c if c.isalnum() else ("sp" if code == 32 else "?")
         lines.append(f"    {{ {{ {body} }} }},  // {code} {disp}")
     lines.append("};")
     lines.append(
