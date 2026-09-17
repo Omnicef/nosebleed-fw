@@ -776,3 +776,23 @@ Checks:
 - `bash tools/check_render_purity.sh` → `purity: OK`.
 - `pio run -e esp32s3` → SUCCESS.
 - `pio run -e cardtest` → SUCCESS.
+
+## T-6.9 — scoreboard widget (2026-09-17)
+
+Added `lib/render/scoreboard_widget.h`: a `CardProducer` that snapshots one
+league cache, hides itself when disabled or empty, renders one PRE/LIVE/POST
+card per cached game, and stable-sorts priority/favourite teams first.
+`has_live_priority_games()` honors the enabled flag so disabled scoreboards do
+not preempt the carousel.
+
+The rebuild key hashes league/id order, scores, and the Python-compatible
+situation fingerprint only. Clock ticks do not change the key. Added
+`test_scoreboard_widget`, covering N-card output, blank-card checks, priority
+priority/live visibility, score/situation key changes, and clock-only
+non-changes.
+
+Checks:
+- `pio test -e native` → 30/30.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
+- `pio run -e esp32s3` → SUCCESS.
+- `pio run -e cardtest` → SUCCESS.
