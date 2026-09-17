@@ -33,6 +33,7 @@
 #include "font_data.h"
 #include "golden_clock.h"
 #include "golden_game_live.h"
+#include "golden_game_live_nfl.h"
 #include "golden_game_post.h"
 #include "golden_game_pre.h"
 #include "golden_game_situation.h"
@@ -1123,6 +1124,74 @@ static void test_game_situation(void) {
     }
 }
 
+static data::Situation nfl_situation(int16_t down, int16_t distance, int16_t yard_line,
+                                     const char* possession, int is_red_zone = 0) {
+    data::Situation s{};
+    s.balls = s.strikes = s.outs = data::kNoInt;
+    s.down = down;
+    s.distance = distance;
+    s.yard_line = yard_line;
+    s.is_red_zone = static_cast<uint8_t>(is_red_zone);
+    data::copy_str(s.possession, sizeof s.possession, possession);
+    return s;
+}
+
+static void test_game_card_live_nfl(void) {
+    struct NflCase {
+        const char* name;
+        bool has_situation;
+        data::Situation sit;
+        const uint16_t* golden;
+    };
+
+    const data::Situation empty = nfl_situation(1, 10, 25, "12");
+    const data::Situation home = nfl_situation(1, 10, 25, "34");
+    const data::Situation redzone = nfl_situation(2, 7, 85, "12", 1);
+
+    const NflCase cases[] = {
+        {"away", true, empty, GOLDEN_GAME_LIVE_NFL_AWAY},
+        {"home", true, home, GOLDEN_GAME_LIVE_NFL_HOME},
+        {"nosit", false, empty, GOLDEN_GAME_LIVE_NFL_NOSIT},
+        {"redzone", true, redzone, GOLDEN_GAME_LIVE_NFL_REDZONE},
+    };
+
+    for (const NflCase& tc : cases) {
+        data::Game g{};
+        g.status = data::kStatusIn;
+        data::copy_str(g.id, sizeof g.id, "t67");
+        data::copy_str(g.away.id, sizeof g.away.id, "12");
+        data::copy_str(g.home.id, sizeof g.home.id, "34");
+        data::copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+        data::copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+        g.away.colour = 0xe4393c;
+        g.home.colour = 0x22a7de;
+        g.period = 2;
+        data::copy_str(g.clock, sizeof g.clock, "12:34");
+        g.away_score = 7;
+        g.home_score = 10;
+        g.has_situation = tc.has_situation ? 1 : 0;
+        g.situation = tc.sit;
+
+        render::LogoResolver logos{nullptr, &null_logo};
+        Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_LIVE_NFL_H);
+        TEST_ASSERT_TRUE(c.valid());
+        render::render_game_card_live(c, g, "nfl", logos, true);
+
+        int diffs = 0;
+        for (int i = 0; i < GOLDEN_GAME_LIVE_NFL_W * GOLDEN_GAME_LIVE_NFL_H; ++i)
+            if (c.px[i] != tc.golden[i]) ++diffs;
+
+        uint8_t rgb[GOLDEN_GAME_LIVE_NFL_W * GOLDEN_GAME_LIVE_NFL_H * 3];
+        expand_to_rgb(c, rgb);
+        char out[64], msg[80];
+        std::snprintf(out, sizeof out, "test/out/game_card_live_nfl_%s.png", tc.name);
+        TEST_ASSERT_TRUE_MESSAGE(write_png_rgb(out, GOLDEN_GAME_LIVE_NFL_W, GOLDEN_GAME_LIVE_NFL_H, rgb), out);
+        std::snprintf(msg, sizeof msg, "NFL live %s parity: px differ", tc.name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, msg);
+        canvas_free(c);
+    }
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -1183,6 +1252,7 @@ int main(void) {
     RUN_TEST(test_game_card_final);
     RUN_TEST(test_game_card_live);
     RUN_TEST(test_game_situation);
+    RUN_TEST(test_game_card_live_nfl);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);

@@ -147,8 +147,123 @@ void render_game_card_post(Canvas16& out, const data::Game& game, const char* le
     draw_centered(out, FONT_SPLEEN_5X8, 22, status, COLOR_DIM);
 }
 
+inline bool is_football_league(const char* league) {
+    return league != nullptr &&
+           (std::strcmp(league, "nfl") == 0 || std::strcmp(league, "college-football") == 0);
+}
+
+inline void nfl_ordinal_str(int value, char* dst, size_t cap) {
+    switch (value) {
+        case 1: std::snprintf(dst, cap, "1ST"); return;
+        case 2: std::snprintf(dst, cap, "2ND"); return;
+        case 3: std::snprintf(dst, cap, "3RD"); return;
+        case 4: std::snprintf(dst, cap, "4TH"); return;
+        default: std::snprintf(dst, cap, "%dTH", value); return;
+    }
+}
+
+inline void nfl_quarter_str(const data::Game& game, char* dst, size_t cap) {
+    if (game.period == data::kNoInt) {
+        dst[0] = '\0';
+        return;
+    }
+    const int period = static_cast<int>(game.period);
+    if (period <= 4) {
+        nfl_ordinal_str(period, dst, cap);
+    } else if (period == 5) {
+        std::snprintf(dst, cap, "OT");
+    } else {
+        std::snprintf(dst, cap, "%dOT", period - 4);
+    }
+}
+
+inline void nfl_down_distance_str(const data::Situation& sit, char* dst, size_t cap) {
+    if (sit.down == data::kNoInt) {
+        dst[0] = '\0';
+        return;
+    }
+    char down[8];
+    nfl_ordinal_str(static_cast<int>(sit.down), down, sizeof down);
+    if (sit.distance == data::kNoInt) {
+        std::snprintf(dst, cap, "%s", down);
+    } else {
+        std::snprintf(dst, cap, "%s&%d", down, static_cast<int>(sit.distance));
+    }
+}
+
+inline void draw_possession_football(Canvas16& c, int x, int y) {
+    // Pillow draw.ellipse([x, y, x + 5, y + 3], ...) for this exact 6x4 box.
+    hline(c, x + 1, x + 4, y, COLOR_FOOTBALL_BROWN);
+    fill_rect(c, x, y + 1, 6, 2, COLOR_FOOTBALL_BROWN);
+    hline(c, x + 1, x + 4, y + 3, COLOR_FOOTBALL_BROWN);
+    line(c, x + 2, y + 1, x + 2, y + 2, COLOR_WHITE);
+}
+
+void render_game_card_live_nfl(Canvas16& out, const data::Game& game, const char* league,
+                               const LogoResolver& logos, bool show_situation = true) {
+    clear_card(out);
+
+    const bool has_sit = show_situation && game.has_situation != 0;
+    const data::Situation& sit = game.situation;
+
+    const int score_y_away = NFL_LOGO_H > 8 ? (NFL_LOGO_H - 8) / 2 : 0;
+
+    const int away_lw = paste_logo(out, 0, 0, NFL_LOGO_H, game.away, league, logos, false);
+    char away_score[8];
+    score_str(game.away_score, away_score, sizeof away_score);
+    draw_text(out, FONT_SPLEEN_5X8, away_lw + 2, score_y_away, away_score, COLOR_WHITE);
+    const int away_sw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(away_score)));
+    if (has_sit && std::strcmp(sit.possession, game.away.id) == 0) {
+        draw_possession_football(out, away_lw + 2 + away_sw + 1, score_y_away);
+    }
+
+    const int score_y_home = NFL_LOGO_H + score_y_away;
+    const int home_lw = paste_logo(out, 0, NFL_LOGO_H, NFL_LOGO_H, game.home, league, logos, false);
+    char home_score[8];
+    score_str(game.home_score, home_score, sizeof home_score);
+    draw_text(out, FONT_SPLEEN_5X8, home_lw + 2, score_y_home, home_score, COLOR_WHITE);
+    const int home_sw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(home_score)));
+    if (has_sit && std::strcmp(sit.possession, game.home.id) == 0) {
+        draw_possession_football(out, home_lw + 2 + home_sw + 1, score_y_home);
+    }
+
+    const int rx = CARD_W - 1;
+    int ry = 0;
+
+    char quarter[8];
+    nfl_quarter_str(game, quarter, sizeof quarter);
+    if (quarter[0] != '\0') {
+        const int qw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(quarter)));
+        draw_text(out, FONT_SPLEEN_5X8, rx - qw, ry, quarter, COLOR_DIM);
+    }
+    ry += 8;
+
+    if (game.clock[0] != '\0') {
+        const int cw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(game.clock)));
+        draw_text(out, FONT_SPLEEN_5X8, rx - cw, ry, game.clock, COLOR_WHITE);
+    }
+    ry += 8;
+
+    if (has_sit) {
+        char down_distance[24];
+        nfl_down_distance_str(sit, down_distance, sizeof down_distance);
+        if (down_distance[0] != '\0') {
+            const int dw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(down_distance)));
+            draw_text(out, FONT_SPLEEN_5X8, rx - dw, ry, down_distance, COLOR_WHITE);
+        }
+
+        const int field_y = static_cast<int>(out.h) - FIELD_STRIP_H;
+        if (field_y >= 0) draw_gridiron(out, 0, field_y, CARD_W, FIELD_STRIP_H, sit);
+    }
+}
+
 void render_game_card_live(Canvas16& out, const data::Game& game, const char* league,
                            const LogoResolver& logos, bool show_situation = true) {
+    if (is_football_league(league)) {
+        render_game_card_live_nfl(out, game, league, logos, show_situation);
+        return;
+    }
+
     clear_card(out);
 
     constexpr int score_y = (LOGO_H_LIVE > 12) ? (LOGO_H_LIVE - 12) / 2 : 0;
