@@ -19,6 +19,7 @@
 
 #include "canvas.h"
 #include "cache.h"
+#include "card_producer.h"
 #include "date_window.h"
 #include "poll.h"
 #include "espn_json.h"
@@ -885,6 +886,53 @@ static void test_data_poll_scheduler(void) {
     TEST_ASSERT_EQUAL_INT64(t0 + 999, sch.next_wake(t0 + 999));
 }
 
+static void fill_card(Canvas16& c, uint16_t color) {
+    for (int y = 0; y < c.h; ++y)
+        for (int x = 0; x < c.w; ++x) c.set(x, y, color);
+}
+
+struct StubProducer : nb::render::CardProducer {
+    const char* producer_id;
+    int count;
+    uint16_t color;
+    bool visible;
+
+    StubProducer(const char* id, int n, uint16_t col, bool vis = true)
+        : producer_id(id), count(n), color(col), visible(vis) {}
+    const char* id() const override { return producer_id; }
+    uint32_t cards_key(int64_t now_utc) const override { return static_cast<uint32_t>(now_utc + count); }
+    int cards(Canvas16* out, int max_cards, int64_t) const override {
+        const int n = count < max_cards ? count : max_cards;
+        for (int i = 0; i < n; ++i) fill_card(out[i], color);
+        return n;
+    }
+    bool is_visible(int64_t) const override { return visible; }
+};
+
+static void test_card_producer_compose(void) {
+    using nb::render::CARD_W;
+    constexpr int kH = 32;
+    Canvas16 cards[3];
+    for (Canvas16& c : cards) {
+        c = nb::canvas_alloc(CARD_W, kH);
+        TEST_ASSERT_TRUE(c.valid());
+    }
+
+    StubProducer a("a", 2, 0xf800), b("b", 3, 0x07e0), hidden("h", 1, 0x001f, false);
+    nb::render::CardProducer* ps[] = {&a, &hidden, &b};
+
+    TEST_ASSERT_EQUAL_INT(2, nb::render::compose_cards(ps, 3, cards, 2, 10));
+    TEST_ASSERT_EQUAL_UINT16(0xf800, cards[0].get(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(0xf800, cards[1].get(63, 31));
+
+    TEST_ASSERT_EQUAL_INT(3, nb::render::compose_cards(ps, 3, cards, 3, 20));
+    TEST_ASSERT_EQUAL_UINT16(0xf800, cards[0].get(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(0xf800, cards[1].get(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(0x07e0, cards[2].get(63, 0));
+
+    for (Canvas16& c : cards) nb::canvas_free(c);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -908,5 +956,6 @@ int main(void) {
     RUN_TEST(test_data_norm_golden);
     RUN_TEST(test_data_date_window);
     RUN_TEST(test_data_poll_scheduler);
+    RUN_TEST(test_card_producer_compose);
     return UNITY_END();
 }

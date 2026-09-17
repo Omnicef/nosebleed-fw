@@ -640,3 +640,14 @@ Checks:
   (mlb:BOS 17×24 8294c099 … nhl:BOS 24×24 8f68df91); misses at h=32 and
   `mlb:ZZZ`; lookup heap delta 0/0, mmap −104 B; T-3.7 frame-phase trap
   fires as designed. RESULT: PASS.
+
+## T-6.1 — CardProducer interface (2026-09-16)
+
+Added `lib/render/card_producer.h`: CARD_W=64, virtual `id`, `cards_key`,
+`cards`, optional `is_visible` and `has_live_priority_games`, plus
+`compose_cards()` concatenation over visible producers. This mirrors
+Marquee's `CardProducer` protocol while keeping the render layer bounded
+and framework-free.
+
+`pio test -e native` now 22/22 with a stub two-producer composition test.
+Purity guard passes.
