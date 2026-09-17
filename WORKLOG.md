@@ -796,3 +796,15 @@ Checks:
 - `bash tools/check_render_purity.sh` → `purity: OK`.
 - `pio run -e esp32s3` → SUCCESS.
 - `pio run -e cardtest` → SUCCESS.
+
+## T-6.10 — Phase 6 close-out (2026-09-17)
+
+Phase 6 is complete: card producers, PRE/FINAL/LIVE game-card states, MLB
+situation indicators, NFL gridiron cards, NHL/NBA/soccer period-clock cards, and
+the scoreboard widget.
+
+Final phase checks after the T-6.9 scoreboard commit:
+- `pio test -e native` → 30/30.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
+- `pio run -e esp32s3` → SUCCESS.
+- `pio run -e cardtest` → SUCCESS.
