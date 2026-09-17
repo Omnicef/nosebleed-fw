@@ -937,6 +937,378 @@ static void cache_test() {
 }
 #endif  // NB_CACHE_TEST
 
+#ifdef NB_CARD_TEST
+// Hardware card seam proof: real data -> existing lib/render cards ->
+// mmap'd flash logos -> panel::blit. No phase-7 strip/scroll yet; this only
+// cycles the four card states for eyeball/serial confirmation.
+#include <WiFi.h>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include "cache.h"
+#include "cardtest_fixture.h"
+#include "date_window.h"
+#include "espn.h"
+#include "espn_json.h"
+#include "game_card.h"
+#include "logos_esp.h"
+#include "panel.h"
+
+#if __has_include("secrets.h")
+#include "secrets.h"
+#endif
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#define WIFI_PASS ""
+#endif
+
+using nb::config::kLeagueApiPaths;
+using nb::config::kLeagueSlugCount;
+using nb::config::kLeagueSlugs;
+using nb::data::copy_str;
+using nb::data::DataCache;
+using nb::data::Game;
+using nb::data::GameList;
+using nb::data::kNoInt;
+using nb::data::kStatusIn;
+using nb::data::kStatusPost;
+using nb::data::kStatusPre;
+
+struct Card {
+    Game g;
+    const char* league = "";
+    const char* label = "";
+    const char* src = "missing";
+    bool show_situation = false;
+};
+
+static GameList* g_card_snaps = nullptr;
+static GameList* g_card_fixture = nullptr;
+
+static nb::LogoArt cardtest_logo(void*, const char* league, const char* abbr, int h) {
+    nb::logos::Ref r;
+    if (league == nullptr || abbr == nullptr || !nb::logos::lookup(league, abbr, static_cast<uint16_t>(h), r))
+        return nb::LogoArt{nullptr, nullptr, 0, 0};
+    return nb::LogoArt{reinterpret_cast<const uint16_t*>(r.px), r.mask, static_cast<int>(r.w),
+                       static_cast<int>(r.h)};
+}
+
+static const nb::render::LogoResolver kCardResolver = {nullptr, cardtest_logo};
+
+static bool cardtest_wifi_time() {
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    Serial.print("cardtest wifi: connecting");
+    for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
+        Serial.print('.');
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println(" NO WIFI");
+        return false;
+    }
+    Serial.printf(" %s\n", WiFi.localIP().toString().c_str());
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    const time_t t0 = time(nullptr);
+    uint32_t waited = 0;
+    while (time(nullptr) < 1700000000 && waited < 20000) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+        waited += 100;
+    }
+    const bool ok = time(nullptr) >= 1700000000;
+    Serial.printf("cardtest sntp: %s (%lu ms)\n", ok ? "synced" : "FAILED",
+                  static_cast<unsigned long>(time(nullptr) >= 1700000000 ? waited : time(nullptr) - t0));
+    return ok;
+}
+
+static int cardtest_poll(DataCache* cache) {
+    static const int kEnabled[] = {0, 2, 5, 6, 7};  // nfl nba mlb nhl epl
+    int total = 0;
+    for (int lg : kEnabled) {
+        char dates[16], url[192];
+        const time_t now = time(nullptr);
+        size_t wire = 0;
+        if (!nb::data::local_day(dates, sizeof dates, now) ||
+            !nb::data::scoreboard_url(url, sizeof url, kLeagueApiPaths[lg], dates)) {
+            Serial.printf("cardtest poll[%s]: URL FAIL\n", kLeagueSlugs[lg]);
+            continue;
+        }
+        GameList* w = cache->writable(lg);
+        JsonDocument doc = nb::data::make_psram_doc();
+        if (!nb::data::espn_fetch_scoreboard(url, doc, &wire)) {
+            Serial.printf("cardtest poll[%s]: FETCH FAIL\n", kLeagueSlugs[lg]);
+            continue;
+        }
+        w->count = nb::data::to_games(doc, *w);
+        nb::data::filter_yesterday_today(w, now);
+        if (w->count == 0) {
+            char yd[16];
+            if (nb::data::local_yesterday(yd, sizeof yd, now) &&
+                nb::data::scoreboard_url(url, sizeof url, kLeagueApiPaths[lg], yd)) {
+                JsonDocument doc2 = nb::data::make_psram_doc();
+                if (nb::data::espn_fetch_scoreboard(url, doc2, &wire))
+                    w->count = nb::data::to_games(doc2, *w);
+            }
+        }
+        cache->publish(lg, static_cast<int64_t>(now));
+        if (cache->snapshot(lg, &g_card_snaps[lg])) total += g_card_snaps[lg].count;
+        Serial.printf("cardtest poll[%s]: games=%d wire=%u B\n", kLeagueSlugs[lg], g_card_snaps[lg].count,
+                      static_cast<unsigned>(wire));
+    }
+    return total;
+}
+
+static bool cardtest_load_fixture(const char* why) {
+    if (g_card_fixture == nullptr) {
+        g_card_fixture = static_cast<GameList*>(heap_caps_calloc(1, sizeof(GameList), MALLOC_CAP_SPIRAM));
+        if (g_card_fixture == nullptr) {
+            Serial.println("cardtest fixture: FAIL no PSRAM for GameList");
+            return false;
+        }
+    }
+    JsonDocument filter = nb::data::make_psram_doc();
+    nb::data::build_scoreboard_filter(filter);
+    JsonDocument doc = nb::data::make_psram_doc();
+    const char* text = kCardTestFixture;
+    const DeserializationError err = nb::data::parse_scoreboard(text, filter, doc);
+    if (err) {
+        Serial.printf("cardtest fixture: parse FAIL (%s) — %s\n", static_cast<int>(bool(err)), why);
+        return false;
+    }
+    g_card_fixture->count = nb::data::to_games(doc, *g_card_fixture);
+    Serial.printf("cardtest fixture: loaded %d games (%s)\n", g_card_fixture->count, why);
+    return g_card_fixture->count > 0;
+}
+
+static void clear_situation(Game& g) {
+    g.has_situation = 0;
+    std::memset(&g.situation, 0, sizeof g.situation);
+}
+
+static void fake_mlb_situation(Game& g) {
+    g.status = kStatusIn;
+    g.has_situation = 1;
+    std::memset(&g.situation, 0, sizeof g.situation);
+    g.situation.on_first = 1;
+    g.situation.on_second = 0;
+    g.situation.on_third = 1;
+    g.situation.balls = 2;
+    g.situation.strikes = 1;
+    g.situation.outs = 1;
+    g.situation.down = kNoInt;
+    g.situation.distance = kNoInt;
+    g.situation.yard_line = kNoInt;
+    g.situation.possession[0] = '\0';
+    if (g.period == kNoInt) g.period = 5;
+    copy_str(g.status_display, sizeof g.status_display, "Top 5th");
+}
+
+static void derive_pre(Game& g, int64_t now) {
+    g.status = kStatusPre;
+    g.away_score = g.home_score = kNoInt;
+    g.start_utc = now + 3600;
+    g.period = kNoInt;
+    g.clock[0] = '\0';
+    copy_str(g.status_display, sizeof g.status_display, "");
+    clear_situation(g);
+}
+
+static void derive_post(Game& g, int64_t now) {
+    g.status = kStatusPost;
+    g.start_utc = now;
+    if (g.away_score == kNoInt) g.away_score = 0;
+    if (g.home_score == kNoInt) g.home_score = 0;
+    if (g.period == kNoInt) g.period = 9;
+    g.clock[0] = '\0';
+    copy_str(g.status_display, sizeof g.status_display, "Final");
+    clear_situation(g);
+}
+
+static void derive_generic(Game& g) {
+    g.status = kStatusIn;
+    if (g.away_score == kNoInt) g.away_score = 0;
+    if (g.home_score == kNoInt) g.home_score = 0;
+    if (g.period == kNoInt) g.period = 5;
+    copy_str(g.clock, sizeof g.clock, "0:00");
+    copy_str(g.status_display, sizeof g.status_display, "Top 5th");
+    clear_situation(g);
+}
+
+static void score_text(int16_t score, char* out, size_t cap) {
+    if (score == kNoInt) {
+        copy_str(out, cap, "-");
+        return;
+    }
+    std::snprintf(out, cap, "%d", static_cast<int>(score));
+}
+
+static void assign_card(Card& c, const Game& g, const char* league, const char* src, bool situation = false) {
+    c.g = g;
+    c.league = league ? league : "";
+    c.src = src;
+    c.show_situation = situation;
+}
+
+static void build_cards(Card cards[4]) {
+    static const char* kLabels[4] = {"PRE", "FINAL", "LIVE generic", "MLB live diamond"};
+    for (int i = 0; i < 4; i++) cards[i].label = kLabels[i];
+
+    const Game* first = nullptr;
+    const char* first_league = nullptr;
+    bool got[4] = {false, false, false, false};
+
+    if (g_card_snaps != nullptr) {
+        for (int lg = 0; lg < DataCache::kLeagues; ++lg) {
+            const GameList& list = g_card_snaps[lg];
+            const char* league = kLeagueSlugs[lg];
+            if (list.count > 0 && first == nullptr) {
+                first = &list.games[0];
+                first_league = league;
+            }
+            for (int i = 0; i < list.count; ++i) {
+                const Game& g = list.games[i];
+                if (!got[0] && g.status == kStatusPre) {
+                    assign_card(cards[0], g, league, "cache");
+                    got[0] = true;
+                }
+                if (!got[1] && g.status == kStatusPost) {
+                    assign_card(cards[1], g, league, "cache");
+                    got[1] = true;
+                }
+                if (!got[2] && g.status == kStatusIn && std::strcmp(league, "mlb") != 0) {
+                    assign_card(cards[2], g, league, "cache");
+                    got[2] = true;
+                }
+                if (!got[3] && std::strcmp(league, "mlb") == 0 && g.status == kStatusIn && g.has_situation) {
+                    assign_card(cards[3], g, league, "cache", true);
+                    got[3] = true;
+                }
+            }
+        }
+    }
+
+    const int64_t raw_now = static_cast<int64_t>(time(nullptr));
+    const int64_t now = raw_now > 1000000000 ? raw_now : 1777000000;
+
+    if (first != nullptr) {
+        if (!got[0]) {
+            assign_card(cards[0], *first, first_league, "cache-derived");
+            derive_pre(cards[0].g, now);
+        }
+        if (!got[1]) {
+            assign_card(cards[1], *first, first_league, "cache-derived");
+            derive_post(cards[1].g, now);
+        }
+        if (!got[2]) {
+            assign_card(cards[2], *first, first_league, "cache-derived");
+            derive_generic(cards[2].g);
+        }
+    }
+
+    if (cardtest_load_fixture("fill missing cards")) {
+        for (int i = 0; i < 4; ++i) {
+            if (got[i]) continue;
+            assign_card(cards[i], g_card_fixture->games[0], "mlb", "fixture");
+            if (i == 0) derive_pre(cards[i].g, now);
+            else if (i == 1) derive_post(cards[i].g, now);
+            else if (i == 2) derive_generic(cards[i].g);
+            else cards[i].show_situation = true;
+            got[i] = true;
+        }
+    }
+
+    if (first != nullptr) {
+        for (int i = 0; i < 4; ++i) {
+            if (got[i]) continue;
+            assign_card(cards[i], *first, i == 3 ? "mlb" : first_league, "cache-derived");
+            if (i == 0) derive_pre(cards[i].g, now);
+            else if (i == 1) derive_post(cards[i].g, now);
+            else if (i == 2) derive_generic(cards[i].g);
+            else fake_mlb_situation(cards[i].g);
+            got[i] = true;
+        }
+    }
+}
+
+static void draw_card(const Card& card, nb::Canvas16& c) {
+    nb::logos::set_phase(nb::logos::Phase::REBUILD);
+    if (card.g.status == kStatusPre) {
+        nb::render::render_game_card_pre(c, card.g, card.league, kCardResolver,
+                                         nb::render::system_local_time, nullptr);
+    } else if (card.g.status == kStatusPost) {
+        nb::render::render_game_card_post(c, card.g, card.league, kCardResolver,
+                                          nb::render::system_local_time, nullptr,
+                                          static_cast<int64_t>(time(nullptr)));
+    } else {
+        nb::render::render_game_card_live(c, card.g, card.league, kCardResolver, card.show_situation);
+    }
+}
+
+static void card_test() {
+    if (!nb::panel::init(g_cfg.hw)) {
+        Serial.println("cardtest: panel.begin() FAILED — check adapter PSU / pins");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    const uint8_t br = g_cfg.hw.brightness > 50 ? 50 : g_cfg.hw.brightness;
+    nb::panel::set_brightness(br);
+    Serial.printf("cardtest: panel %dx%d, brightness=%u\n", nb::panel::width(), nb::panel::height(),
+                  static_cast<unsigned>(br));
+
+    const bool logos_ok = nb::logos::init_mmap();
+    Serial.printf("cardtest logos: %s count=%u\n", logos_ok ? "mmap OK" : "MISSED, using abbrev fallback",
+                  static_cast<unsigned>(nb::logos::table().count));
+
+    int cache_games = 0;
+    const bool time_ok = cardtest_wifi_time();
+    if (time_ok) {
+        g_card_snaps = static_cast<GameList*>(
+            heap_caps_calloc(DataCache::kLeagues, sizeof(GameList), MALLOC_CAP_SPIRAM));
+        DataCache* cache = static_cast<DataCache*>(
+            heap_caps_calloc(1, sizeof(DataCache), MALLOC_CAP_SPIRAM));
+        if (g_card_snaps != nullptr && cache != nullptr) cache_games = cardtest_poll(cache);
+        else Serial.println("cardtest poll: alloc FAIL");
+    }
+    Serial.printf("cardtest source: %s (cache games=%d)\n",
+                  cache_games > 0 ? "cache" : "fixture", cache_games);
+
+    Card cards[4] = {};
+    build_cards(cards);
+    for (int i = 0; i < 4; ++i) {
+        if (cards[i].league == nullptr || cards[i].league[0] == '\0') {
+            Serial.printf("cardtest: card '%s' has no game — fallback fixture missing\n", cards[i].label);
+            for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+        }
+    }
+    for (int i = 0; i < 4; ++i)
+        Serial.printf("cardtest map: %s src=%s\n", cards[i].label, cards[i].src);
+
+    const int pw = nb::panel::width(), ph = nb::panel::height();
+    nb::Canvas16 card = nb::canvas_alloc(nb::render::CARD_W, static_cast<uint16_t>(ph));
+    if (!card.valid()) {
+        Serial.println("cardtest: canvas alloc FAIL");
+        for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+    (void)pw;
+
+    for (;;) {
+        for (int i = 0; i < 4; ++i) {
+            const Card& c = cards[i];
+            char as[8], hs[8];
+            score_text(c.g.away_score, as, sizeof as);
+            score_text(c.g.home_score, hs, sizeof hs);
+            Serial.printf("cardtest card: %s | %s:%s @ %s | %s-%s | src=%s\n", c.label, c.league,
+                          c.g.away.abbr, c.g.home.abbr, as, hs, c.src);
+            const uint32_t end = millis() + 4000;
+            while (static_cast<int32_t>(end - millis()) > 0) {
+                draw_card(c, card);
+                nb::panel::blit(card);
+                vTaskDelay(pdMS_TO_TICKS(33));
+            }
+        }
+    }
+}
+#endif  // NB_CARD_TEST
 
 // T-1.2 accept: esp_partition_find locates the `logos` and `web` data partitions.
 static void partition_snapshot(void) {
@@ -1049,6 +1421,9 @@ void setup() {
 
 #ifdef NB_PANEL_TEST
   panel_test();  // never returns; tasks below are for normal boots only
+#endif
+#ifdef NB_CARD_TEST
+  card_test();  // never returns; tasks below are for normal boots only
 #endif
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
