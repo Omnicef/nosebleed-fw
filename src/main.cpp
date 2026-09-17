@@ -1150,9 +1150,118 @@ static void assign_card(Card& c, const Game& g, const char* league, const char* 
     c.show_situation = situation;
 }
 
-static void build_cards(Card cards[4]) {
-    static const char* kLabels[4] = {"PRE", "FINAL", "LIVE generic", "MLB live diamond"};
-    for (int i = 0; i < 4; i++) cards[i].label = kLabels[i];
+static constexpr int kCardCount = 8;
+
+static const Game* find_nfl_live() {
+    if (g_card_snaps == nullptr) return nullptr;
+    for (int lg = 0; lg < DataCache::kLeagues; ++lg) {
+        if (std::strcmp(kLeagueSlugs[lg], "nfl") != 0) continue;
+        const GameList& list = g_card_snaps[lg];
+        for (int i = 0; i < list.count; ++i) {
+            if (list.games[i].status == kStatusIn) return &list.games[i];
+        }
+        break;
+    }
+    return nullptr;
+}
+
+static void assign_generic_card(Card& c, const Game& g, const char* league, const char* src) {
+    const bool football = nb::render::is_football_league(league);
+    assign_card(c, g, football ? "nba" : (league ? league : ""), src);
+    if (football) {
+        copy_str(c.g.away.abbr, sizeof c.g.away.abbr, "LAL");
+        copy_str(c.g.home.abbr, sizeof c.g.home.abbr, "BOS");
+        c.g.away.colour = 0x552583;
+        c.g.home.colour = 0x007a33;
+    }
+    derive_generic(c.g);
+}
+
+static void set_nfl_no_situation(Game& g) {
+    g.status = kStatusIn;
+    g.has_situation = 0;
+    std::memset(&g.situation, 0, sizeof g.situation);
+    if (g.period == kNoInt) g.period = 2;
+    copy_str(g.clock, sizeof g.clock, "12:34");
+    copy_str(g.status_display, sizeof g.status_display, "Q2");
+}
+
+static void set_nfl_possession(Game& g, bool home, bool redzone) {
+    g.status = kStatusIn;
+    g.has_situation = 1;
+    std::memset(&g.situation, 0, sizeof g.situation);
+    g.situation.balls = g.situation.strikes = g.situation.outs = kNoInt;
+    g.situation.down = redzone ? 2 : 1;
+    g.situation.distance = redzone ? 7 : 10;
+    g.situation.yard_line = redzone ? 85 : 25;
+    g.situation.is_red_zone = redzone ? 1 : 0;
+    copy_str(g.situation.possession, sizeof g.situation.possession, home ? g.home.id : g.away.id);
+    if (g.period == kNoInt) g.period = 2;
+    copy_str(g.clock, sizeof g.clock, "12:34");
+    copy_str(g.status_display, sizeof g.status_display, "Q2");
+}
+
+static void fake_nfl_game(Game& g, const Game& base, int64_t now) {
+    g = base;
+    copy_str(g.id, sizeof g.id, "cardtest-nfl");
+    g.status = kStatusIn;
+    copy_str(g.away.id, sizeof g.away.id, "12");
+    copy_str(g.home.id, sizeof g.home.id, "34");
+    copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+    copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+    g.away.colour = 0xe4393c;
+    g.home.colour = 0x003594;
+    g.away_score = 7;
+    g.home_score = 10;
+    g.start_utc = now;
+    g.period = 2;
+    copy_str(g.clock, sizeof g.clock, "12:34");
+    copy_str(g.status_display, sizeof g.status_display, "Q2");
+    clear_situation(g);
+}
+
+static void fill_nfl_gridiron_cards(Card cards[kCardCount], const Game* first, int64_t now) {
+    Game base{};
+    const char* src = nullptr;
+    const Game* nfl_live = find_nfl_live();
+
+    if (nfl_live != nullptr) {
+        base = *nfl_live;
+        src = "cache-derived";
+    } else if (g_card_fixture != nullptr && g_card_fixture->count > 0) {
+        fake_nfl_game(base, g_card_fixture->games[0], now);
+        src = "fixture-derived";
+    } else if (first != nullptr) {
+        fake_nfl_game(base, *first, now);
+        src = "cache-derived";
+    } else {
+        return;
+    }
+
+    assign_card(cards[4], base, "nfl", src);
+    set_nfl_possession(cards[4].g, false, false);
+    cards[4].show_situation = true;
+
+    assign_card(cards[5], base, "nfl", src);
+    set_nfl_possession(cards[5].g, true, false);
+    cards[5].show_situation = true;
+
+    assign_card(cards[6], base, "nfl", src);
+    set_nfl_no_situation(cards[6].g);
+    cards[6].show_situation = false;
+
+    assign_card(cards[7], base, "nfl", src);
+    set_nfl_possession(cards[7].g, false, true);
+    cards[7].show_situation = true;
+}
+
+static void build_cards(Card cards[kCardCount]) {
+    static const char* kLabels[kCardCount] = {
+        "PRE", "FINAL", "LIVE generic", "MLB live diamond",
+        "NFL gridiron away", "NFL gridiron home", "NFL gridiron no-situation",
+        "NFL gridiron redzone",
+    };
+    for (int i = 0; i < kCardCount; ++i) cards[i].label = kLabels[i];
 
     const Game* first = nullptr;
     const char* first_league = nullptr;
@@ -1176,7 +1285,8 @@ static void build_cards(Card cards[4]) {
                     assign_card(cards[1], g, league, "cache");
                     got[1] = true;
                 }
-                if (!got[2] && g.status == kStatusIn && std::strcmp(league, "mlb") != 0) {
+                if (!got[2] && g.status == kStatusIn && std::strcmp(league, "mlb") != 0 &&
+                    !nb::render::is_football_league(league)) {
                     assign_card(cards[2], g, league, "cache");
                     got[2] = true;
                 }
@@ -1201,19 +1311,21 @@ static void build_cards(Card cards[4]) {
             derive_post(cards[1].g, now);
         }
         if (!got[2]) {
-            assign_card(cards[2], *first, first_league, "cache-derived");
-            derive_generic(cards[2].g);
+            assign_generic_card(cards[2], *first, first_league, "cache-derived");
         }
     }
 
     if (cardtest_load_fixture("fill missing cards")) {
         for (int i = 0; i < 4; ++i) {
             if (got[i]) continue;
-            assign_card(cards[i], g_card_fixture->games[0], "mlb", "fixture");
-            if (i == 0) derive_pre(cards[i].g, now);
-            else if (i == 1) derive_post(cards[i].g, now);
-            else if (i == 2) derive_generic(cards[i].g);
-            else cards[i].show_situation = true;
+            if (i == 2) {
+                assign_generic_card(cards[i], g_card_fixture->games[0], "nba", "fixture");
+            } else {
+                assign_card(cards[i], g_card_fixture->games[0], "mlb", "fixture");
+                if (i == 0) derive_pre(cards[i].g, now);
+                else if (i == 1) derive_post(cards[i].g, now);
+                else cards[i].show_situation = true;
+            }
             got[i] = true;
         }
     }
@@ -1221,14 +1333,19 @@ static void build_cards(Card cards[4]) {
     if (first != nullptr) {
         for (int i = 0; i < 4; ++i) {
             if (got[i]) continue;
-            assign_card(cards[i], *first, i == 3 ? "mlb" : first_league, "cache-derived");
-            if (i == 0) derive_pre(cards[i].g, now);
-            else if (i == 1) derive_post(cards[i].g, now);
-            else if (i == 2) derive_generic(cards[i].g);
-            else fake_mlb_situation(cards[i].g);
+            if (i == 2) {
+                assign_generic_card(cards[i], *first, first_league, "cache-derived");
+            } else {
+                assign_card(cards[i], *first, i == 3 ? "mlb" : first_league, "cache-derived");
+                if (i == 0) derive_pre(cards[i].g, now);
+                else if (i == 1) derive_post(cards[i].g, now);
+                else fake_mlb_situation(cards[i].g);
+            }
             got[i] = true;
         }
     }
+
+    fill_nfl_gridiron_cards(cards, first, now);
 }
 
 static void draw_card(const Card& card, nb::Canvas16& c) {
@@ -1272,15 +1389,15 @@ static void card_test() {
     Serial.printf("cardtest source: %s (cache games=%d)\n",
                   cache_games > 0 ? "cache" : "fixture", cache_games);
 
-    Card cards[4] = {};
+    Card cards[kCardCount] = {};
     build_cards(cards);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < kCardCount; ++i) {
         if (cards[i].league == nullptr || cards[i].league[0] == '\0') {
             Serial.printf("cardtest: card '%s' has no game — fallback fixture missing\n", cards[i].label);
             for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
         }
     }
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < kCardCount; ++i)
         Serial.printf("cardtest map: %s src=%s\n", cards[i].label, cards[i].src);
 
     const int pw = nb::panel::width(), ph = nb::panel::height();
@@ -1292,13 +1409,14 @@ static void card_test() {
     (void)pw;
 
     for (;;) {
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < kCardCount; ++i) {
             const Card& c = cards[i];
             char as[8], hs[8];
             score_text(c.g.away_score, as, sizeof as);
             score_text(c.g.home_score, hs, sizeof hs);
-            Serial.printf("cardtest card: %s | %s:%s @ %s | %s-%s | src=%s\n", c.label, c.league,
-                          c.g.away.abbr, c.g.home.abbr, as, hs, c.src);
+            Serial.printf("cardtest card: %s | %s:%s @ %s | %s-%s | src=%s | sit=%u poss=%s\n",
+                          c.label, c.league, c.g.away.abbr, c.g.home.abbr, as, hs, c.src,
+                          static_cast<unsigned>(c.show_situation), c.g.situation.possession);
             const uint32_t end = millis() + 4000;
             while (static_cast<int32_t>(end - millis()) > 0) {
                 draw_card(c, card);
