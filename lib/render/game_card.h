@@ -113,5 +113,38 @@ inline void render_game_card_pre(Canvas16& out, const data::Game& game, const ch
     draw_centered(out, FONT_SPLEEN_5X8, 25, ts, COLOR_DIM);
 }
 
+void render_game_card_post(Canvas16& out, const data::Game& game, const char* league,
+                           const LogoResolver& logos, LocalTimeFn local, void* local_ctx,
+                           int64_t now_utc) {
+    clear_card(out);
+
+    paste_logo(out, 0, 1, LOGO_H_POST, game.away, league, logos, false);
+    paste_logo(out, CARD_W, 1, LOGO_H_POST, game.home, league, logos, true);
+
+    char away_score[8], home_score[8], score[24];
+    score_str(game.away_score, away_score, sizeof away_score);
+    score_str(game.home_score, home_score, sizeof home_score);
+    std::snprintf(score, sizeof score, "%s-%s", away_score, home_score);
+    draw_centered(out, FONT_SPLEEN_6X12, 11, score, COLOR_WHITE);
+
+    LocalTime start{}, today{};
+    const bool has_start = local != nullptr && local(local_ctx, game.start_utc, start);
+    const bool has_now = local != nullptr && local(local_ctx, now_utc, today);
+    const bool prev_day = has_start && has_now &&
+        (start.year < today.year ||
+         (start.year == today.year && (start.month < today.month ||
+          (start.month == today.month && start.day < today.day))));
+
+    char status[16];
+    if (prev_day) {
+        std::snprintf(status, sizeof status, "%d/%d", start.month, start.day);
+    } else if (game.period != data::kNoInt && game.period > 9) {
+        std::snprintf(status, sizeof status, "F/%d", static_cast<int>(game.period));
+    } else {
+        std::snprintf(status, sizeof status, "FINAL");
+    }
+    draw_centered(out, FONT_SPLEEN_5X8, 22, status, COLOR_DIM);
+}
+
 }  // namespace render
 }  // namespace nb

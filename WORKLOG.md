@@ -678,3 +678,20 @@ the PRE fallback card with Pillow directly, and `test_game_card_pre`.
 Checks:
 - `pio test -e native` 24/24, including zero-diff PRE card parity.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## T-6.4 — FINAL game card (2026-09-16)
+
+Added `render_game_card_post()` to `lib/render/game_card.h`: 19 px corner
+logos, centered spleen-6x12 score at y=11, and the dim status line at y=22.
+The status line matches Marquee: same-day `FINAL`, extra-innings `F/N`, and
+previous-local-day `M/D`. The renderer takes `now_utc` plus the injected local
+time callback so the day boundary uses local calendar fields, not UTC date
+rollover.
+
+`LocalTime` gained `year` for that date comparison. Added
+`tools/gen_game_post_golden.py`, generating both the same-day and
+previous-day Pillow goldens, and `test_game_card_final` to diff them.
+
+Checks:
+- `pio test -e native` 25/25, zero-diff for both FINAL variants.
+- `bash tools/check_render_purity.sh` → `purity: OK`.

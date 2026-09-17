@@ -32,6 +32,7 @@
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
+#include "golden_game_post.h"
 #include "golden_game_pre.h"
 #include "golden_logo.h"
 #include "logo.h"
@@ -897,7 +898,7 @@ static bool fixed_local(void* ctx, int64_t, render::LocalTime& out) {
 static void test_clock_widget(void) {
     // 2025-12-25 Thu 15:30 local. The Python clock golden already embeds this
     // exact card; the widget must draw it from the same injected clock.
-    const render::LocalTime now{4, 12, 25, 15, 30};
+    const render::LocalTime now{4, 2025, 12, 25, 15, 30};
     render::ClockWidget widget(&fixed_local, const_cast<render::LocalTime*>(&now), false);
 
     Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_H);
@@ -933,6 +934,17 @@ static LogoArt null_logo(void*, const char*, const char*, int) {
     return LogoArt{nullptr, nullptr, 0, 0};
 }
 
+struct DateLocal {
+    render::LocalTime start;
+    render::LocalTime now;
+};
+
+static bool two_dates(void* ctx, int64_t ts, render::LocalTime& out) {
+    auto* d = static_cast<DateLocal*>(ctx);
+    out = ts < 1000 ? d->start : d->now;
+    return true;
+}
+
 static void test_game_card_pre(void) {
     Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_PRE_H);
     TEST_ASSERT_TRUE(c.valid());
@@ -947,7 +959,7 @@ static void test_game_card_pre(void) {
     g.start_utc = 1735140600;
 
     render::LogoResolver logos{nullptr, &null_logo};
-    render::LocalTime start{4, 12, 25, 10, 30};
+    render::LocalTime start{4, 2025, 12, 25, 10, 30};
     render::render_game_card_pre(c, g, "nba", logos, &fixed_local, &start);
 
     int diffs = 0;
@@ -960,6 +972,54 @@ static void test_game_card_pre(void) {
                              "game_card_pre.png write failed");
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "PRE card parity: px differ");
     canvas_free(c);
+}
+
+static void test_game_card_final(void) {
+    data::Game g{};
+    g.status = data::kStatusPost;
+    data::copy_str(g.id, sizeof g.id, "t64");
+    data::copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+    data::copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+    g.away.colour = 0xe4393c;
+    g.home.colour = 0x22a7de;
+    g.away_score = 3;
+    g.home_score = 2;
+    g.start_utc = 999;
+
+    render::LogoResolver logos{nullptr, &null_logo};
+    DateLocal dates{
+        render::LocalTime{4, 2025, 12, 25, 10, 30},
+        render::LocalTime{4, 2025, 12, 25, 18, 0},
+    };
+
+    Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_POST_H);
+    TEST_ASSERT_TRUE(c.valid());
+    render::render_game_card_post(c, g, "nba", logos, &two_dates, &dates, 1001);
+
+    int diffs = 0;
+    for (int i = 0; i < GOLDEN_GAME_POST_W * GOLDEN_GAME_POST_H; ++i)
+        if (c.px[i] != GOLDEN_GAME_POST[i]) ++diffs;
+
+    uint8_t rgb[GOLDEN_GAME_POST_W * GOLDEN_GAME_POST_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/game_card_post.png", GOLDEN_GAME_POST_W, GOLDEN_GAME_POST_H, rgb),
+                             "game_card_post.png write failed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "FINAL card parity: px differ");
+    canvas_free(c);
+
+    dates.start = render::LocalTime{4, 2025, 12, 24, 10, 30};
+    Canvas16 prev = canvas_alloc(render::CARD_W, GOLDEN_GAME_POST_H);
+    TEST_ASSERT_TRUE(prev.valid());
+    render::render_game_card_post(prev, g, "nba", logos, &two_dates, &dates, 1001);
+    diffs = 0;
+    for (int i = 0; i < GOLDEN_GAME_POST_W * GOLDEN_GAME_POST_H; ++i)
+        if (prev.px[i] != GOLDEN_GAME_POST_PREV[i]) ++diffs;
+
+    expand_to_rgb(prev, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/game_card_post_prev.png", GOLDEN_GAME_POST_W, GOLDEN_GAME_POST_H, rgb),
+                             "game_card_post_prev.png write failed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "previous-day FINAL card parity: px differ");
+    canvas_free(prev);
 }
 
 static void fill_card(Canvas16& c, uint16_t color) {
@@ -1019,6 +1079,7 @@ int main(void) {
     RUN_TEST(test_clock_parity);
     RUN_TEST(test_clock_widget);
     RUN_TEST(test_game_card_pre);
+    RUN_TEST(test_game_card_final);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);

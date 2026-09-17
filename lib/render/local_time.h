@@ -14,6 +14,7 @@ namespace render {
 
 struct LocalTime {
     int wday = 0;    // 0 = Sunday, matching struct tm
+    int year = 1970;
     int month = 1;   // 1-12
     int day = 1;     // 1-31
     int hour = 0;    // 0-23
@@ -27,6 +28,7 @@ inline bool system_local_time(void*, int64_t now_utc, LocalTime& out) {
     struct tm local;
     if (localtime_r(&t, &local) == nullptr) return false;
     out.wday = local.tm_wday;
+    out.year = local.tm_year + 1900;
     out.month = local.tm_mon + 1;
     out.day = local.tm_mday;
     out.hour = local.tm_hour;
