@@ -662,3 +662,19 @@ the exact timestamp used by the existing Pillow golden.
 Native suite is 23/23: the widget renders the golden clock with zero
 differing RGB565 pixels, and the key stays constant within the minute but
 changes across minute/format changes.
+
+## T-6.3 — PRE game card (2026-09-16)
+
+Extracted the local-time helper into `lib/render/local_time.h` and added
+`lib/render/game_card.h` with Marquee's `_paste_logo` behavior plus the PRE
+card layout: 24 px corner logos, centered `VS`, and the local start time
+bottom-centered. The logo resolver is injected, keeping the render layer
+pure and testable.
+
+Fixed the fallback width to match `game_strip._paste_logo()`: `textlength + 1`
+for the abbreviation box. Added `tools/gen_game_pre_golden.py`, which renders
+the PRE fallback card with Pillow directly, and `test_game_card_pre`.
+
+Checks:
+- `pio test -e native` 24/24, including zero-diff PRE card parity.
+- `bash tools/check_render_purity.sh` → `purity: OK`.

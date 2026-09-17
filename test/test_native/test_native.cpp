@@ -22,6 +22,7 @@
 #include "card_producer.h"
 #include "clock_widget.h"
 #include "date_window.h"
+#include "game_card.h"
 #include "poll.h"
 #include "espn_json.h"
 #include "config.h"
@@ -31,6 +32,7 @@
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
+#include "golden_game_pre.h"
 #include "golden_logo.h"
 #include "logo.h"
 #include "logos.h"
@@ -250,7 +252,7 @@ static void test_abbr_fallback(void) {
 
     Canvas16 c = canvas_alloc(GCARD_W, GCARD_H);
     const int w = draw_abbr_fallback(c, FBX, FBY, FBH, "LIV", col);
-    TEST_ASSERT_EQUAL_INT(15, w);  // 3 chars * spleen-5x8 advance
+    TEST_ASSERT_EQUAL_INT(16, w);  // 3 chars * advance + Python's +1 fallback box
 
     int diffs = 0;
     for (int i = 0; i < GCARD_W * GCARD_H; ++i)
@@ -927,6 +929,39 @@ static void test_clock_widget(void) {
     canvas_free(c);
 }
 
+static LogoArt null_logo(void*, const char*, const char*, int) {
+    return LogoArt{nullptr, nullptr, 0, 0};
+}
+
+static void test_game_card_pre(void) {
+    Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_PRE_H);
+    TEST_ASSERT_TRUE(c.valid());
+
+    data::Game g{};
+    g.status = data::kStatusPre;
+    data::copy_str(g.id, sizeof g.id, "t63");
+    data::copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+    data::copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+    g.away.colour = 0xe4393c;
+    g.home.colour = 0x22a7de;
+    g.start_utc = 1735140600;
+
+    render::LogoResolver logos{nullptr, &null_logo};
+    render::LocalTime start{4, 12, 25, 10, 30};
+    render::render_game_card_pre(c, g, "nba", logos, &fixed_local, &start);
+
+    int diffs = 0;
+    for (int i = 0; i < GOLDEN_GAME_PRE_W * GOLDEN_GAME_PRE_H; ++i)
+        if (c.px[i] != GOLDEN_GAME_PRE[i]) ++diffs;
+
+    uint8_t rgb[GOLDEN_GAME_PRE_W * GOLDEN_GAME_PRE_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/game_card_pre.png", GOLDEN_GAME_PRE_W, GOLDEN_GAME_PRE_H, rgb),
+                             "game_card_pre.png write failed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "PRE card parity: px differ");
+    canvas_free(c);
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -983,6 +1018,7 @@ int main(void) {
     RUN_TEST(test_font_sheet);
     RUN_TEST(test_clock_parity);
     RUN_TEST(test_clock_widget);
+    RUN_TEST(test_game_card_pre);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);

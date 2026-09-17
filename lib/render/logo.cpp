@@ -28,7 +28,7 @@ int draw_abbr_fallback(Canvas16& c, int x, int y, int logo_h, const char* abbr,
     const int len = static_cast<int>(buf[0] ? (buf[1] ? (buf[2] ? 3 : 2) : 1) : 0);
     const int text_y = y + (logo_h - font.box_h) / 2;  // Python: (logo_h - 8) // 2
     draw_text(c, font, x, text_y, buf, color);
-    return text_width(font, len);
+    return text_width(font, len) + 1;  // _paste_logo fallback box includes 1px.
 }
 
 bool parse_hex565(const char* hex, uint16_t& out) {

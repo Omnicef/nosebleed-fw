@@ -35,7 +35,7 @@ bool blit_logo(Canvas16& c, int x, int y, const LogoArt& a);
 // T-3.6 — no logo in the atlas: abbreviation (max 3 chars, as the Python
 // truncates) in team colour, spleen-5x8, vertically centred in a logo_h
 // band at (x, y) — layout ported from the Python's _paste_logo fallback.
-// Returns the pixel width consumed (fixed-width font: 3 * advance).
+// Returns the pixel width consumed (fixed-width text plus Python's +1 box).
 int draw_abbr_fallback(Canvas16& c, int x, int y, int logo_h, const char* abbr,
                        uint16_t color, const Font& font = FONT_SPLEEN_5X8);
 
