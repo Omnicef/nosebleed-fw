@@ -808,3 +808,31 @@ Final phase checks after the T-6.9 scoreboard commit:
 - `bash tools/check_render_purity.sh` → `purity: OK`.
 - `pio run -e esp32s3` → SUCCESS.
 - `pio run -e cardtest` → SUCCESS.
+
+## T-7.1–T-7.5 — strip, scroll, paging, preemption, publication (2026-09-17)
+
+Added `lib/render/strip.{h,cpp}` (mega-strip composer: cards concatenated with
+`card_gap` into one PSRAM canvas, `compute_pages` for static mode,
+`order_producers` for favourite-team preemption) and
+`lib/render/scroll.{h,cpp}` (`strip_w + panel_w` period with black lead-in,
+`scroll_rewrap` on rebuild, full-repaint `blit_window` host mirror of
+`panel::blit`, `page_window_x` 5 s dwell, `StripHolder` double-buffer with
+atomic pointer swap + generation counter).
+
+Wired normal boot in `src/main.cpp`: `task_net` (WiFi + SNTP supervision),
+`task_poll` (PollScheduler from `LeagueConfig`, fetch+publish, cards_key
+change → rebuild on core 0, 1 s tick so clock-minute keys land promptly),
+`task_render` (core 1: front()/generation only, scroll or static paging,
+`panel::blit(canvas, -w0, 0)` full-panel repaint, live config on notify).
+Setup inits panel (brightness clamped ≤50 % on the bench until the 4 A PSU
+is confirmed), logos mmap, PSRAM DataCache, carousel-ordered producers from
+`widgets[]` with favourites per league.
+
+**UNVERIFIED on hardware:** the stale-column behaviour of the blit path
+(host-proven via `blit_window` only — no HUB75 simulator exists, PLAN §4).
+T-7.6 (frame pacing) is open: hardware only.
+
+Checks:
+- `pio test -e native` → 37/37 (7 new Phase 7 cases).
+- `bash tools/check_render_purity.sh` → `purity: OK`.
+- `pio run -e esp32s3` + all six device test envs → SUCCESS.

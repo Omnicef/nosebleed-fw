@@ -44,6 +44,8 @@
 #include "png_writer.h"
 #include "primitives.h"
 #include "scoreboard_widget.h"
+#include "scroll.h"
+#include "strip.h"
 
 using namespace nb;
 
@@ -1389,9 +1391,10 @@ struct StubProducer : nb::render::CardProducer {
     int count;
     uint16_t color;
     bool visible;
+    bool prio;
 
-    StubProducer(const char* id, int n, uint16_t col, bool vis = true)
-        : producer_id(id), count(n), color(col), visible(vis) {}
+    StubProducer(const char* id, int n, uint16_t col, bool vis = true, bool prio_ = false)
+        : producer_id(id), count(n), color(col), visible(vis), prio(prio_) {}
     const char* id() const override { return producer_id; }
     uint32_t cards_key(int64_t now_utc) const override { return static_cast<uint32_t>(now_utc + count); }
     int cards(Canvas16* out, int max_cards, int64_t) const override {
@@ -1400,6 +1403,7 @@ struct StubProducer : nb::render::CardProducer {
         return n;
     }
     bool is_visible(int64_t) const override { return visible; }
+    bool has_live_priority_games() const override { return prio; }
 };
 
 static void test_card_producer_compose(void) {
@@ -1424,6 +1428,194 @@ static void test_card_producer_compose(void) {
     TEST_ASSERT_EQUAL_UINT16(0x07e0, cards[2].get(63, 0));
 
     for (Canvas16& c : cards) nb::canvas_free(c);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — strip builder, pages, preemption order, scroll window, publication
+// ---------------------------------------------------------------------------
+
+static void test_compute_pages(void) {
+    // 72-px blocks on a 64-px panel: one card per page, never split.
+    const uint16_t uniform[] = {72, 72, 72};
+    int32_t px[8];
+    TEST_ASSERT_EQUAL_INT(3, nb::render::compute_pages(uniform, 3, 64, px, 8));
+    TEST_ASSERT_EQUAL_INT(0, px[0]);
+    TEST_ASSERT_EQUAL_INT(72, px[1]);
+    TEST_ASSERT_EQUAL_INT(144, px[2]);
+
+    // Mixed widths pack greedily; a block wider than the panel gets its own.
+    const uint16_t mixed[] = {40, 40, 72, 40};
+    TEST_ASSERT_EQUAL_INT(4, nb::render::compute_pages(mixed, 4, 64, px, 8));
+    TEST_ASSERT_EQUAL_INT(0, px[0]);
+    TEST_ASSERT_EQUAL_INT(40, px[1]);
+    TEST_ASSERT_EQUAL_INT(80, px[2]);   // 72 alone: wider than panel_w
+    TEST_ASSERT_EQUAL_INT(152, px[3]);
+
+    // max_pages caps output.
+    TEST_ASSERT_EQUAL_INT(2, nb::render::compute_pages(uniform, 3, 64, px, 2));
+}
+
+static void test_strip_build(void) {
+    using namespace nb::render;
+    StripBuilder b;
+    TEST_ASSERT_TRUE(b.init_scratch(kMaxStripCards, 32));
+
+    StubProducer a("a", 2, 0xf800), hidden("h", 1, 0x001f, false), c("c", 3, 0x07e0);
+    CardProducer* ps[] = {&a, &hidden, &c};
+    int order[3] = {0, 1, 2};
+
+    Strip strip;
+    TEST_ASSERT_EQUAL_INT(5, b.build(strip, ps, order, 3, 8, 64, 100));
+    TEST_ASSERT_TRUE(strip.canvas.valid());
+    TEST_ASSERT_EQUAL_INT(5 * (CARD_W + 8), strip.canvas.w);   // T-7.1: gap after every card
+    TEST_ASSERT_EQUAL_UINT16(32, strip.canvas.h);
+    TEST_ASSERT_EQUAL_UINT16(0xf800, strip.canvas.get(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(0xf800, strip.canvas.get(CARD_W - 1, 31));
+    TEST_ASSERT_EQUAL_UINT16(0, strip.canvas.get(CARD_W, 0));  // gap column stays black
+    TEST_ASSERT_EQUAL_UINT16(0xf800, strip.canvas.get(CARD_W + 8, 0));  // card 1: still producer a
+    TEST_ASSERT_EQUAL_UINT16(0x07e0, strip.canvas.get(2 * (CARD_W + 8), 0));  // first card of c
+    TEST_ASSERT_EQUAL_UINT16(0x07e0, strip.canvas.get(4 * 72 + 63, 31));  // last card's last px
+    TEST_ASSERT_EQUAL_UINT16(0, strip.canvas.get(5 * 72 - 1, 31));        // gap after the last card
+    TEST_ASSERT_EQUAL_INT(5, strip.page_count);               // 72 > 64: one card per page
+    TEST_ASSERT_EQUAL_INT(144, strip.page_x[2]);
+    nb::canvas_free(strip.canvas);
+
+    // Truncation at the scratch cap, no overrun.
+    StripBuilder small;
+    TEST_ASSERT_TRUE(small.init_scratch(3, 32));
+    TEST_ASSERT_EQUAL_INT(3, small.build(strip, ps, order, 3, 8, 64, 100));
+    nb::canvas_free(strip.canvas);
+
+    // Nothing visible -> 0 cards, invalid canvas (render task paints black).
+    StubProducer off("o", 1, 0xf800, false);
+    CardProducer* none[] = {&off};
+    int order1[] = {0};
+    TEST_ASSERT_EQUAL_INT(0, b.build(strip, none, order1, 1, 8, 64, 100));
+    TEST_ASSERT_FALSE(strip.canvas.valid());
+
+    // T-7.1 acceptance math: 35 cards -> 2520 px, ~158 KB.
+    StubProducer slate("s", 35, 0xffff);
+    CardProducer* one[] = {&slate};
+    TEST_ASSERT_EQUAL_INT(35, b.build(strip, one, order1, 1, 8, 64, 100));
+    TEST_ASSERT_EQUAL_INT(2520, strip.canvas.w);
+    TEST_ASSERT_EQUAL_UINT32(2520u * 32u * 2u, 161280u);  // 35 cards = 157.5 KiB, per T-7.1
+    nb::canvas_free(strip.canvas);
+}
+
+static void test_order_producers(void) {
+    using namespace nb::render;
+    StubProducer clock("clock", 1, 0xf800), mlb("mlb", 2, 0x07e0, true, true),
+        nba("nba", 1, 0x001f), nhl("nhl", 1, 0xf81f, true, true),
+        off("off", 1, 0x0000, false, true);
+    CardProducer* ps[] = {&clock, &mlb, &nba, &nhl, &off};
+    int order[5];
+
+    TEST_ASSERT_EQUAL_INT(5, order_producers(ps, 5, 0, false, order));
+    for (int i = 0; i < 5; ++i) TEST_ASSERT_EQUAL_INT(i, order[i]);
+
+    // Live favourites first (stable), the rest follow in carousel order.
+    // The hidden priority producer is NOT floated — build skips it anyway.
+    TEST_ASSERT_EQUAL_INT(5, order_producers(ps, 5, 0, true, order));
+    TEST_ASSERT_EQUAL_INT(1, order[0]);
+    TEST_ASSERT_EQUAL_INT(3, order[1]);
+    TEST_ASSERT_EQUAL_INT(0, order[2]);
+    TEST_ASSERT_EQUAL_INT(2, order[3]);
+    TEST_ASSERT_EQUAL_INT(4, order[4]);
+}
+
+static void test_scroll_window(void) {
+    using namespace nb::render;
+    const int sw = 2520, pw = 64, p = sw + pw;
+    TEST_ASSERT_EQUAL_INT(p, scroll_period(sw, pw));
+    TEST_ASSERT_EQUAL_INT(-pw, scroll_window_x(sw, pw, 0));    // full black lead-in
+    TEST_ASSERT_EQUAL_INT(-1, scroll_window_x(sw, pw, pw - 1));
+    TEST_ASSERT_EQUAL_INT(0, scroll_window_x(sw, pw, pw));     // first strip px at panel x 0
+    TEST_ASSERT_EQUAL_INT(sw - 1, scroll_window_x(sw, pw, p - 1));  // last px, overhang reads black
+    TEST_ASSERT_EQUAL_INT(-pw, scroll_window_x(sw, pw, p));    // wraps back to lead-in
+    TEST_ASSERT_EQUAL_INT(sw - pw, scroll_window_x(sw, pw, -pw));  // negative wraps to the strip tail
+
+    // T-7.2: rewrap keeps position modulo the NEW period; a shrunken strip
+    // re-enters range without snapping to 0.
+    TEST_ASSERT_EQUAL_INT(100, scroll_rewrap(100, sw, pw));
+    TEST_ASSERT_EQUAL_INT(100, scroll_rewrap(100 + p, sw, pw));
+    TEST_ASSERT_EQUAL_INT(88, scroll_rewrap(3000, 144, pw));  // 3000 % (144+64)
+    TEST_ASSERT_EQUAL_INT(scroll_window_x(sw, pw, 3000), scroll_window_x(sw, pw, scroll_rewrap(3000, sw, pw)));
+}
+
+static void test_blit_window(void) {
+    using namespace nb::render;
+    constexpr int kH = 8, kBlock = 72;
+    Canvas16 strip = nb::canvas_alloc(3 * kBlock, kH);
+    Canvas16 dst = nb::canvas_alloc(64, kH);
+    TEST_ASSERT_TRUE(strip.valid() && dst.valid());
+    for (int x = 0; x < CARD_W; ++x)
+        for (int y = 0; y < kH; ++y) {
+            strip.set(x, y, 0xf800);
+            strip.set(kBlock + x, y, 0x07e0);
+            strip.set(2 * kBlock + x, y, 0x001f);
+        }
+
+    blit_window(strip, dst, -32);  // lead-in: left half black, right half card 0
+    for (int y = 0; y < kH; ++y) {
+        TEST_ASSERT_EQUAL_UINT16(0, dst.get(0, y));
+        TEST_ASSERT_EQUAL_UINT16(0xf800, dst.get(40, y));
+    }
+    blit_window(strip, dst, 64);  // gap columns paint black mid-window
+    TEST_ASSERT_EQUAL_UINT16(0, dst.get(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(0x07e0, dst.get(8, 0));
+    blit_window(strip, dst, 3 * kBlock - 10);  // overhang past the strip end
+    TEST_ASSERT_EQUAL_UINT16(0x001f, dst.get(0, 0));
+    for (int y = 0; y < kH; ++y) TEST_ASSERT_EQUAL_UINT16(0, dst.get(63, y));
+
+    // T-7.3: EVERY dst cell written — a stale canvas becomes exactly the window.
+    fill_card(dst, 0xffff);
+    blit_window(strip, dst, -64);
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < 64; ++x) TEST_ASSERT_EQUAL_UINT16(0, dst.get(x, y));
+
+    nb::canvas_free(strip);
+    nb::canvas_free(dst);
+}
+
+static void test_page_window_x(void) {
+    using namespace nb::render;
+    Strip s;
+    s.page_x[0] = 0; s.page_x[1] = 72; s.page_x[2] = 144; s.page_count = 3;
+    PageState st;
+    TEST_ASSERT_EQUAL_INT(0, page_window_x(s, st, 100, 5));   // first page, dwell starts
+    TEST_ASSERT_EQUAL_INT(0, page_window_x(s, st, 104, 5));   // still dwelling
+    TEST_ASSERT_EQUAL_INT(72, page_window_x(s, st, 105, 5));  // advance
+    TEST_ASSERT_EQUAL_INT(144, page_window_x(s, st, 115, 5));
+    TEST_ASSERT_EQUAL_INT(0, page_window_x(s, st, 120, 5));   // wraps
+    st.page = 2;                                              // rebuild shrank the list
+    s.page_count = 1;
+    TEST_ASSERT_EQUAL_INT(0, page_window_x(s, st, 130, 5));
+    s.page_count = 0;
+    TEST_ASSERT_EQUAL_INT(0, page_window_x(s, st, 140, 5));
+}
+
+static void test_strip_holder(void) {
+    using namespace nb::render;
+    StripHolder h;
+    TEST_ASSERT_NULL(h.front());
+    TEST_ASSERT_EQUAL_UINT32(0, h.generation());
+
+    Strip* b0 = h.back();
+    b0->page_x[0] = 111;
+    h.commit();
+    const Strip* f = h.front();
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_INT(111, f->page_x[0]);                 // T-7.2: reader sees new strip
+    TEST_ASSERT_EQUAL_UINT32(1, h.generation());
+
+    Strip* b1 = h.back();
+    TEST_ASSERT_TRUE(b1 != f);                                // builds into the OTHER buffer
+    b1->page_x[0] = 222;
+    h.commit();
+    TEST_ASSERT_EQUAL_INT(222, h.front()->page_x[0]);
+    TEST_ASSERT_EQUAL_UINT32(2, h.generation());
+    TEST_ASSERT_EQUAL_INT(111, f->page_x[0]);                 // front flipped, back is the old front
+    TEST_ASSERT_TRUE(h.back() == b0);
 }
 
 int main(void) {
@@ -1458,5 +1650,12 @@ int main(void) {
     RUN_TEST(test_data_poll_scheduler);
     RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
+    RUN_TEST(test_compute_pages);
+    RUN_TEST(test_strip_build);
+    RUN_TEST(test_order_producers);
+    RUN_TEST(test_scroll_window);
+    RUN_TEST(test_blit_window);
+    RUN_TEST(test_page_window_x);
+    RUN_TEST(test_strip_holder);
     return UNITY_END();
 }
