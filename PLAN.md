@@ -429,6 +429,8 @@ Every call must pass `DeserializationOption::NestingLimit(20)` alongside the fil
 
 ## Phase 6 — Cards and widgets
 
+**A redesign is coming, and it is NOT this phase.** The cards were reviewed on the panel after T-6.6 and the designs will change substantially — but only once the whole pipeline is functional (Phase 7 scrolling, Phase 8 web UI). Porting faithfully first means a rendering bug and a design change never look alike. **Phase 12 (below) owns the redesign.** Until then, deviating from the Python is a defect, not an improvement.
+
 Copy every layout constant from the Python verbatim. Do not re-derive; `CARD_DESIGN_SPEC.md` was tuned on real hardware. Each task lands with a host render test.
 
 **T-6.1 — `CardProducer` interface.** `cards(cache, now, panel_h) -> Canvas16[]` and `cards_key(cache, now) -> hash`. `CARD_W = 64`.
@@ -587,6 +589,35 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 **T-11.7 — College leagues.** Extend `logos.bin` to ~1,000 teams (~2.08 MB), still inside the partition.
 
 ---
+
+---
+
+## Phase 12 — Card redesign
+
+Deferred deliberately from Phase 6. The ported designs render correctly on hardware but are not what we want to
+look at. This phase changes them on purpose, with the pipeline already working underneath.
+
+**What changes about the tests.** Through Phase 6 the golden PNGs proved *the port preserved the Python's design* —
+they were a correctness proof against an external reference. From here they prove *the render still matches the
+design we agreed*. Same mechanism, different meaning. Every redesigned card needs its golden **regenerated
+deliberately**, in the same commit as the design change, never quietly refreshed to make a test pass.
+
+**T-12.1 — Iterate on the host, not the panel.** Design rounds run through `env:native` PNGs and the T-2.10 live
+preview — seconds per round. Flash to the panel to confirm legibility at real pitch, not to explore. Do not
+iterate design through an agent and a flash cycle; it is minutes per round and the agent cannot see the result.
+
+**T-12.2 — Write the new spec first.** A successor to the Python's `CARD_DESIGN_SPEC.md`, in this repo, stating
+the layout per card state before any code changes. Record *why* each element sits where it does; that document is
+what makes the goldens meaningful.
+
+**T-12.3 — Redesign per card state**, one commit each, golden regenerated alongside. PRE, FINAL, LIVE generic,
+MLB diamond, NFL gridiron, period/clock.
+
+**T-12.4 — Confirm on the panel** at real brightness with the 5 V / 4 A PSU. Legibility at 3–4 mm pitch is the
+acceptance criterion, and it cannot be judged from a 4× PNG.
+
+**T-12.5 — Commit.** `Phase 12: card redesign`
+
 
 ## §5 Risk register
 
