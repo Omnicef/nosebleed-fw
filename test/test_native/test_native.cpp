@@ -20,6 +20,7 @@
 #include "canvas.h"
 #include "cache.h"
 #include "card_producer.h"
+#include "clock_widget.h"
 #include "date_window.h"
 #include "poll.h"
 #include "espn_json.h"
@@ -886,6 +887,46 @@ static void test_data_poll_scheduler(void) {
     TEST_ASSERT_EQUAL_INT64(t0 + 999, sch.next_wake(t0 + 999));
 }
 
+static bool fixed_local(void* ctx, int64_t, render::LocalTime& out) {
+    out = *static_cast<const render::LocalTime*>(ctx);
+    return true;
+}
+
+static void test_clock_widget(void) {
+    // 2025-12-25 Thu 15:30 local. The Python clock golden already embeds this
+    // exact card; the widget must draw it from the same injected clock.
+    const render::LocalTime now{4, 12, 25, 15, 30};
+    render::ClockWidget widget(&fixed_local, const_cast<render::LocalTime*>(&now), false);
+
+    Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_H);
+    TEST_ASSERT_TRUE(c.valid());
+    TEST_ASSERT_EQUAL_INT(1, widget.cards(&c, 1, 0));
+
+    int diffs = 0;
+    for (int i = 0; i < GOLDEN_W * GOLDEN_H; ++i)
+        if (c.px[i] != GOLDEN_CLOCK[i]) ++diffs;
+
+    uint8_t rgb[GOLDEN_W * GOLDEN_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/clock_widget.png", GOLDEN_W, GOLDEN_H, rgb),
+                             "clock_widget.png write failed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "clock widget parity: px differ");
+
+    const uint32_t k1 = widget.cards_key(1000);
+    const uint32_t k2 = widget.cards_key(2000);
+    TEST_ASSERT_EQUAL_UINT32(k1, k2);
+    render::ClockWidget later(&fixed_local, const_cast<render::LocalTime*>(&now), false);
+    // ponytail: later shares the same mutable fixed LocalTime so this changes
+    // the key without inventing a second timestamp plumbing path.
+    // LocalTime has no mutable path in the API; modify through const_cast here.
+    const_cast<render::LocalTime*>(&now)->minute = 31;
+    TEST_ASSERT_TRUE(k1 != later.cards_key(3000));
+
+    render::ClockWidget h24(&fixed_local, const_cast<render::LocalTime*>(&now), true);
+    TEST_ASSERT_TRUE(h24.cards_key(4000) != later.cards_key(5000));
+    canvas_free(c);
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -941,6 +982,7 @@ int main(void) {
     RUN_TEST(test_primitives);
     RUN_TEST(test_font_sheet);
     RUN_TEST(test_clock_parity);
+    RUN_TEST(test_clock_widget);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);

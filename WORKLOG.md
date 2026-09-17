@@ -651,3 +651,14 @@ and framework-free.
 
 `pio test -e native` now 22/22 with a stub two-producer composition test.
 Purity guard passes.
+
+## T-6.2 — Clock widget (2026-09-16)
+
+Added `lib/render/clock_widget.h`: CardProducer with injected local-time
+callback, 12h/24h formatting, and the Marquee clock layout (time y=2,
+date y=22). The callback keeps lib/render framework-free and lets tests fake
+the exact timestamp used by the existing Pillow golden.
+
+Native suite is 23/23: the widget renders the golden clock with zero
+differing RGB565 pixels, and the key stays constant within the minute but
+changes across minute/format changes.
