@@ -121,5 +121,54 @@ inline void draw_indicator(Canvas16& c, const data::Game& game, const char* leag
     if (league != nullptr && std::strcmp(league, "mlb") == 0) draw_mlb_indicator(c, game);
 }
 
+constexpr int GOALPOST_W = 5;
+constexpr int GOALPOST_H = 5;
+
+constexpr uint16_t COLOR_FOOTBALL_BROWN = 0x9283;   // rgb565(150, 80, 30)
+constexpr uint16_t COLOR_GRASS_LINE = 0x0400;       // rgb565(0, 130, 0)
+constexpr uint16_t COLOR_GOALPOST = 0xFEE0;         // rgb565(255, 220, 0)
+
+inline void draw_goalpost(Canvas16& c, int x_base, int y_base) {
+    for (int dy = 0; dy < 3; ++dy) {
+        point(c, x_base + 1, y_base + dy, COLOR_GOALPOST);
+        point(c, x_base + 3, y_base + dy, COLOR_GOALPOST);
+    }
+    for (int dx = 1; dx < 4; ++dx) {
+        point(c, x_base + dx, y_base + 2, COLOR_GOALPOST);
+    }
+    for (int dy = 3; dy < GOALPOST_H; ++dy) {
+        point(c, x_base + 2, y_base + dy, COLOR_GOALPOST);
+    }
+}
+
+inline void draw_gridiron(Canvas16& c, int x0, int y0, int width, int height,
+                          const data::Situation& sit) {
+    if (height < 2 || width < 2 * GOALPOST_W + 1) return;
+
+    const int bottom = y0 + height - 1;
+    hline(c, x0, x0 + width - 1, bottom, COLOR_GRASS_LINE);
+    draw_goalpost(c, x0, y0);
+    draw_goalpost(c, x0 + width - GOALPOST_W, y0);
+
+    if (sit.yard_line == data::kNoInt) return;
+
+    int yl = sit.yard_line;
+    if (yl < 0) yl = 0;
+    if (yl > 100) yl = 100;
+    const int field_left = x0 + GOALPOST_W;
+    const int field_right = x0 + width - 1 - GOALPOST_W;
+    if (field_right <= field_left) return;
+
+    int ball_x = field_left + (yl * (field_right - field_left)) / 100;
+    if (ball_x < field_left) ball_x = field_left;
+    if (ball_x > field_right) ball_x = field_right;
+    const int ball_y = bottom - 2;
+
+    // Pillow draw.ellipse([x - 2, y - 1, x + 2, y + 1], ...) for this exact 5x3 box.
+    hline(c, ball_x - 1, ball_x + 1, ball_y - 1, COLOR_FOOTBALL_BROWN);
+    hline(c, ball_x - 2, ball_x + 2, ball_y, COLOR_FOOTBALL_BROWN);
+    hline(c, ball_x - 1, ball_x + 1, ball_y + 1, COLOR_FOOTBALL_BROWN);
+}
+
 }  // namespace render
 }  // namespace nb

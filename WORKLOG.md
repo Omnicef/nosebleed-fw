@@ -726,3 +726,18 @@ Added `tools/gen_game_live_situation_golden.py`, `golden_game_situation.h`, and
 Checks:
 - `pio test -e native` 27/27, zero-diff MLB situation parity for all cases.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## T-6.7 — NFL live gridiron card (2026-09-16)
+
+Routed `nfl` and `college-football` LIVE cards to the Marquee stacked layout:
+12 px logos, centered quarter/clock and down/distance rows, possession football,
+and the 8 px bottom field strip. Possession follows the situation's team ID, and
+`is_red_zone` changes no field-strip pixels.
+
+Added `draw_gridiron()` and its exact goalpost/ball pixel patterns to
+`lib/render/situation.h`, plus `tools/gen_game_live_nfl_golden.py` and
+`test_game_card_live_nfl` for away, home, missing-situation, and red-zone cases.
+
+Checks:
+- `pio test -e native` 28/28, zero-diff NFL live parity for all cases.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
