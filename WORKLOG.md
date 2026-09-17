@@ -741,3 +741,16 @@ Added `draw_gridiron()` and its exact goalpost/ball pixel patterns to
 Checks:
 - `pio test -e native` 28/28, zero-diff NFL live parity for all cases.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## cardtest follow-up — hardware confirmation (2026-09-17)
+
+Extended the hardware `cardtest` cycle from four cards to the eight current
+Phase 6 variants: PRE, FINAL, generic LIVE, MLB diamond, and the four NFL
+gridiron states. The user confirmed the panel showed all cards correctly,
+including gridiron logo colors, legibility, and no smearing.
+
+Checks:
+- `pio test -e native` → 28/28.
+- `pio run -e esp32s3` → SUCCESS.
+- `pio run -e cardtest` → SUCCESS.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
