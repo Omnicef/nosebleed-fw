@@ -754,3 +754,25 @@ Checks:
 - `pio run -e esp32s3` → SUCCESS.
 - `pio run -e cardtest` → SUCCESS.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## T-6.8 — period-clock live cards (2026-09-17)
+
+Added NHL, NBA/college-basketball, and soccer period-clock LIVE routing to
+`render_game_card_live()`, matching Marquee's bleeding-edge 30 px logos and
+centered outlined score/period/clock layout. The league check is passed into
+the renderer because `data::Game` intentionally does not carry its league.
+
+Ported the period/clock formatting: NHL `P1/P2/P3/OT/SO`, NBA `Q1-Q4/OT/2OT`,
+soccer `1ST/2ND/HT` plus minute-only clock normalization. The renderer ignores
+situation for these leagues, matching the Python route.
+
+Added `tools/gen_game_live_periodclock_golden.py`, `golden_game_live_periodclock.h`,
+and `test_game_card_live_periodclock` for NHL, NBA/OT, soccer minute, and soccer
+halftime cases. Updated hardware `cardtest` to 11 cards: generic LIVE is now MLB
+no-situation, and NHL/NBA/soccer period-clock variants cycle separately.
+
+Checks:
+- `pio test -e native` → 29/29, zero-diff period-clock parity for all cases.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
+- `pio run -e esp32s3` → SUCCESS.
+- `pio run -e cardtest` → SUCCESS.

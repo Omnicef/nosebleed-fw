@@ -34,6 +34,7 @@
 #include "golden_clock.h"
 #include "golden_game_live.h"
 #include "golden_game_live_nfl.h"
+#include "golden_game_live_periodclock.h"
 #include "golden_game_post.h"
 #include "golden_game_pre.h"
 #include "golden_game_situation.h"
@@ -1040,7 +1041,7 @@ static void test_game_card_live(void) {
     g.home_score = 2;
 
     render::LogoResolver logos{nullptr, &null_logo};
-    render::render_game_card_live(c, g, "nba", logos);
+    render::render_game_card_live(c, g, "mlb", logos);
 
     int diffs = 0;
     for (int i = 0; i < GOLDEN_GAME_LIVE_W * GOLDEN_GAME_LIVE_H; ++i)
@@ -1192,6 +1193,63 @@ static void test_game_card_live_nfl(void) {
     }
 }
 
+static void test_game_card_live_periodclock(void) {
+    struct PeriodClockCase {
+        const char* name;
+        const char* league;
+        const char* away_abbr;
+        const char* home_abbr;
+        const char* clock;
+        const char* status_display;
+        uint32_t away_colour;
+        uint32_t home_colour;
+        int16_t period;
+        int16_t away_score;
+        int16_t home_score;
+        const uint16_t* golden;
+    };
+
+    const PeriodClockCase cases[] = {
+        {"nhl", "nhl", "LAL", "VGK", "14:22", "3rd", 0xe4393c, 0x22a7de, 3, 3, 2, GOLDEN_GAME_LIVE_PERIODCLOCK_NHL},
+        {"nba", "nba", "BOS", "LAL", "2:30", "OT", 0x22a7de, 0xe4393c, 5, 101, 98, GOLDEN_GAME_LIVE_PERIODCLOCK_NBA},
+        {"soccer", "epl", "ARS", "CHE", "", "67'", 0xe4393c, 0x22a7de, 2, 1, 0, GOLDEN_GAME_LIVE_PERIODCLOCK_SOCCER},
+        {"halftime", "eng.1", "LIV", "MCI", "", "HALF TIME", 0xe4393c, 0x22a7de, 2, 2, 2, GOLDEN_GAME_LIVE_PERIODCLOCK_HALFTIME},
+    };
+
+    for (const PeriodClockCase& tc : cases) {
+        data::Game g{};
+        g.status = data::kStatusIn;
+        data::copy_str(g.id, sizeof g.id, "t68");
+        data::copy_str(g.status_display, sizeof g.status_display, tc.status_display);
+        data::copy_str(g.clock, sizeof g.clock, tc.clock);
+        g.period = tc.period;
+        data::copy_str(g.away.abbr, sizeof g.away.abbr, tc.away_abbr);
+        data::copy_str(g.home.abbr, sizeof g.home.abbr, tc.home_abbr);
+        g.away.colour = tc.away_colour;
+        g.home.colour = tc.home_colour;
+        g.away_score = tc.away_score;
+        g.home_score = tc.home_score;
+
+        render::LogoResolver logos{nullptr, &null_logo};
+        Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_LIVE_PERIODCLOCK_H);
+        TEST_ASSERT_TRUE(c.valid());
+        render::render_game_card_live(c, g, tc.league, logos);
+
+        int diffs = 0;
+        for (int i = 0; i < GOLDEN_GAME_LIVE_PERIODCLOCK_W * GOLDEN_GAME_LIVE_PERIODCLOCK_H; ++i)
+            if (c.px[i] != tc.golden[i]) ++diffs;
+
+        uint8_t rgb[GOLDEN_GAME_LIVE_PERIODCLOCK_W * GOLDEN_GAME_LIVE_PERIODCLOCK_H * 3];
+        expand_to_rgb(c, rgb);
+        char out[64], msg[80];
+        std::snprintf(out, sizeof out, "test/out/game_card_live_periodclock_%s.png", tc.name);
+        TEST_ASSERT_TRUE_MESSAGE(write_png_rgb(out, GOLDEN_GAME_LIVE_PERIODCLOCK_W, GOLDEN_GAME_LIVE_PERIODCLOCK_H, rgb), out);
+        std::snprintf(msg, sizeof msg, "period-clock %s parity: px differ", tc.name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, msg);
+        canvas_free(c);
+    }
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -1253,6 +1311,7 @@ int main(void) {
     RUN_TEST(test_game_card_live);
     RUN_TEST(test_game_situation);
     RUN_TEST(test_game_card_live_nfl);
+    RUN_TEST(test_game_card_live_periodclock);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);
