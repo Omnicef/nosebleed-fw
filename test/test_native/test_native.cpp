@@ -32,6 +32,7 @@
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
+#include "golden_game_live.h"
 #include "golden_game_post.h"
 #include "golden_game_pre.h"
 #include "golden_logo.h"
@@ -1022,6 +1023,35 @@ static void test_game_card_final(void) {
     canvas_free(prev);
 }
 
+static void test_game_card_live(void) {
+    Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_LIVE_H);
+    TEST_ASSERT_TRUE(c.valid());
+
+    data::Game g{};
+    g.status = data::kStatusIn;
+    data::copy_str(g.id, sizeof g.id, "t65");
+    data::copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+    data::copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+    g.away.colour = 0xe4393c;
+    g.home.colour = 0x22a7de;
+    g.away_score = 4;
+    g.home_score = 2;
+
+    render::LogoResolver logos{nullptr, &null_logo};
+    render::render_game_card_live(c, g, "nba", logos);
+
+    int diffs = 0;
+    for (int i = 0; i < GOLDEN_GAME_LIVE_W * GOLDEN_GAME_LIVE_H; ++i)
+        if (c.px[i] != GOLDEN_GAME_LIVE[i]) ++diffs;
+
+    uint8_t rgb[GOLDEN_GAME_LIVE_W * GOLDEN_GAME_LIVE_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/game_card_live.png", GOLDEN_GAME_LIVE_W, GOLDEN_GAME_LIVE_H, rgb),
+                             "game_card_live.png write failed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, "generic LIVE card parity: px differ");
+    canvas_free(c);
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -1080,6 +1110,7 @@ int main(void) {
     RUN_TEST(test_clock_widget);
     RUN_TEST(test_game_card_pre);
     RUN_TEST(test_game_card_final);
+    RUN_TEST(test_game_card_live);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);

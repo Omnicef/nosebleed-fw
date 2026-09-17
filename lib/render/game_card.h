@@ -146,5 +146,23 @@ void render_game_card_post(Canvas16& out, const data::Game& game, const char* le
     draw_centered(out, FONT_SPLEEN_5X8, 22, status, COLOR_DIM);
 }
 
+void render_game_card_live(Canvas16& out, const data::Game& game, const char* league,
+                           const LogoResolver& logos) {
+    clear_card(out);
+
+    constexpr int score_y = (LOGO_H_LIVE > 12) ? (LOGO_H_LIVE - 12) / 2 : 0;
+
+    const int away_w = paste_logo(out, 0, 0, LOGO_H_LIVE, game.away, league, logos, false);
+    char away_score[8];
+    score_str(game.away_score, away_score, sizeof away_score);
+    draw_text(out, FONT_SPLEEN_6X12, away_w + 2, score_y, away_score, COLOR_WHITE);
+
+    const int home_w = paste_logo(out, CARD_W, 0, LOGO_H_LIVE, game.home, league, logos, true);
+    char home_score[8];
+    score_str(game.home_score, home_score, sizeof home_score);
+    const int home_sw = text_width(FONT_SPLEEN_6X12, static_cast<int>(std::strlen(home_score)));
+    draw_text(out, FONT_SPLEEN_6X12, CARD_W - home_w - 2 - home_sw, score_y, home_score, COLOR_WHITE);
+}
+
 }  // namespace render
 }  // namespace nb

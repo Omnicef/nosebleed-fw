@@ -695,3 +695,16 @@ previous-day Pillow goldens, and `test_game_card_final` to diff them.
 Checks:
 - `pio test -e native` 25/25, zero-diff for both FINAL variants.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## T-6.5 — generic LIVE game card (2026-09-16)
+
+Added `render_game_card_live()`: 13 px four-corner fallback/logo boxes with
+away and home scores beside them. The Python's returned `_paste_logo` width
+drives both score offsets, so the no-logo path keeps the score clear of the
+abbreviation box. MLB/NFL situation overlays remain for later tasks.
+
+Added `tools/gen_game_live_golden.py` and `test_game_card_live`.
+
+Checks:
+- `pio test -e native` 26/26, zero-diff generic LIVE card parity.
+- `bash tools/check_render_purity.sh` → `purity: OK`.
