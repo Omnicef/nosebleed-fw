@@ -52,7 +52,7 @@ def up565(v):
 def main() -> int:
     atlas = (REPO / "logos.bin").read_bytes()
     table, height = build_logos.read(atlas)
-    r = table[LOGO_KEY]
+    r = table[LOGO_KEY + (24,)]  # PRE-slot row: premultiplied over black, mask = alpha > 0
     w, h, blob = r["w"], r["h"], r["blob"]
     n_px = w * h
     px565 = list(struct.unpack(f"<{n_px}H", blob[:n_px * 2]))

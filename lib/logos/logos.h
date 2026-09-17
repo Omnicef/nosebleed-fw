@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
 // T-3.4 — logos.bin mmap reader. Maps the `logos` data partition with
-// esp_partition_mmap and binary-searches the (league, abbr) index in place:
-// zero allocation, zero copy (accept: heap before == heap after). Returned
-// pointers are raw flash-mapped addresses — valid only for byte reads, and
-// every miss through here costs a real SPI flash read, which is why lookup
-// is restricted to strip rebuilds (T-3.7 assert below).
+// esp_partition_mmap and binary-searches the (league, abbr, height) index in
+// place: zero allocation, zero copy (accept: heap before == heap after).
+// Returned pointers are raw flash-mapped addresses — valid only for byte
+// reads, and every miss through here costs a real SPI flash read, which is
+// why lookup is restricted to strip rebuilds (T-3.7 assert below).
+//
+// v2 (Phase 6): one index row per card display height — the ESP32 cannot
+// LANCZOS-resample, so build_logos.py pre-bakes every size a card shows
+// (game_strip's 12/13/19/24/30 + the base 32).
 //
 // Layout mirrors tools/build_logos.py exactly (PLAN §3 / T-3.2): LE, 12 B
 // header, 22 B sorted index entries — struct "<8s4sIHHH" is 8+4+4+2+2+2 = 22,
@@ -27,7 +31,7 @@ namespace nb {
 namespace logos {
 
 constexpr uint32_t kMagic = 0x474C424Eu;  // "NBLG" little-endian
-constexpr uint16_t kVersion = 1;
+constexpr uint16_t kVersion = 2;  // v2: one row per (league, abbr, height)
 constexpr size_t kHeaderSize = 12;
 constexpr size_t kEntrySize = 22;
 
@@ -81,11 +85,14 @@ inline size_t blob_size(const Entry& e) {
 }
 
 // Comparison against the raw padded key fields — the order build_logos.py
-// sorted in (memcmp of NUL-padded fields preserves Python tuple order).
-inline int key_cmp(const char* la, const char* aa, const uint8_t* p) {
+// sorted in (memcmp of NUL-padded fields preserves Python tuple order, and
+// the u16 height tiebreak is the third component of that tuple).
+inline int key_cmp(const char* la, const char* aa, uint16_t h, const uint8_t* p) {
     int c = strncmp(la, reinterpret_cast<const char*>(p), 8);
     if (c != 0) return c;
-    return strncmp(aa, reinterpret_cast<const char*>(p + 8), 4);
+    c = strncmp(aa, reinterpret_cast<const char*>(p + 8), 4);
+    if (c != 0) return c;
+    return h < rd16(p + 18) ? -1 : (h > rd16(p + 18) ? 1 : 0);
 }
 
 struct Ref {
@@ -95,15 +102,16 @@ struct Ref {
     uint16_t h;
 };
 
-// Binary search over `count` sorted entries. False on miss. Pure pointer
-// arithmetic — no allocation, no copy, on any path.
+// Binary search over `count` sorted entries. False on miss — including a
+// hit on (league, abbr) at a different height, which must never hand a card
+// the wrong-size art. Pure pointer arithmetic: no allocation, no copy.
 inline bool find(const uint8_t* base, size_t count,
-                 const char* league, const char* abbr, Ref& out) {
+                 const char* league, const char* abbr, uint16_t h, Ref& out) {
     size_t lo = 0, hi = count;
     while (lo < hi) {
         const size_t mid = lo + (hi - lo) / 2;
         const uint8_t* p = base + kHeaderSize + mid * kEntrySize;
-        const int c = key_cmp(league, abbr, p);
+        const int c = key_cmp(league, abbr, h, p);
         if (c == 0) {
             const Entry e = entry_at(base, mid);
             out.px = base + e.offset;

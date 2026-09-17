@@ -181,21 +181,24 @@ static void logos_test() {
     Serial.printf("  mmap internal free delta=%ld largestblk delta=%ld (one-time mapping)\n", df, db);
     if (!ok) ++fails;
 
-    // One team per league + the cross-league abbreviation reuse (BOS is in
-    // MLB, NBA and NHL — a bare-abbr index could only hold one) + a miss.
-    // Expected FNV-1a of px+mask, computed host-side from the same logos.bin.
-    struct Want { const char* league; const char* abbr; uint32_t hash; };
+    // Base rows died with atlas v2: every row is a card display height.
+    // One team per league at the PRE slot (h=24) + the cross-league
+    // abbreviation reuse (BOS is in MLB, NBA and NHL — a bare-abbr index
+    // could only hold one) + misses. FNV-1a of px+mask, recomputed
+    // host-side from the same logos.bin.
+    struct Want { const char* league; const char* abbr; uint16_t h; uint32_t hash; };
     static const Want wants[] = {
-        {"mlb", "BOS", 0xa917f7d6u}, {"nfl", "KC", 0x2b7038d9u},
-        {"nba", "LAL", 0xeacc63aau}, {"nhl", "VGK", 0x1621bb28u},
-        {"epl", "LIV", 0x1b0feca6u}, {"nhl", "BOS", 0x6322ff39u},
-        {"mlb", "ZZZ", 0},  // must miss
+        {"mlb", "BOS", 24, 0x8294c099u}, {"nfl", "KC", 24, 0x0444d882u},
+        {"nba", "LAL", 24, 0x3a12ba50u}, {"nhl", "VGK", 24, 0x2c255b8au},
+        {"epl", "LIV", 24, 0xb82b6b3fu}, {"nhl", "BOS", 24, 0x8f68df91u},
+        {"mlb", "BOS", 32, 0},  // not a card height — must miss
+        {"mlb", "ZZZ", 24, 0},  // must miss
     };
     const uint32_t f2 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     const uint32_t b2 = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
     for (const auto& w : wants) {
         Ref r;
-        const bool hit = lookup(w.league, w.abbr, r);
+        const bool hit = lookup(w.league, w.abbr, w.h, r);
         const bool ok = w.hash ? (hit && blob_hash(r) == w.hash) : !hit;
         if (!ok) ++fails;
         if (hit) {
@@ -221,7 +224,7 @@ static void logos_test() {
     Serial.flush();
     delay(50);
     Ref r;
-    lookup("mlb", "BOS", r);
+    lookup("mlb", "BOS", 24, r);
     Serial.println("  ASSERT FAILED: no trap");  // must not reach
 #else
     set_phase(Phase::FRAME);

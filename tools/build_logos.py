@@ -11,17 +11,30 @@ Processing per logo (verbatim port of ``LogoPipeline._process``):
     binary alpha threshold @128 -> UnsharpMask + saturation/contrast boost.
 
 Then each logo is quantised to RGB565 colour + a 1-bit alpha mask and packed
-with a sorted (league, abbr) index for on-device binary search.
+with a sorted (league, abbr, height) index for on-device binary search.
+
+Version 2: one index row per card display height (the heights game_strip.py
+scales the processed art to: 12, 13, 19, 24, 30). The ESP32 cannot resample
+with LANCZOS, so every size a card shows is pre-baked — and *only* those
+sizes: the v1 nominal-32 row drew nothing (cards never request the raw
+processed art; every _paste_logo call resizes first). Rows are composited
+over black with Pillow *itself* — identically to game_strip._paste_logo's
+``card.paste(logo, box, mask=logo)`` onto a black card — and carry
+mask = (source alpha > 0), so the device's masked blit reproduces the
+Python's soft-alpha blend exactly (over black, blend == premultiply, and
+q565 of an already-q565 value is the identity). Every entry's key height is
+its exact blob height, and the card heights are distinct, so keys are unique.
 
 File format (little-endian):
     header  magic "NBLG" | u16 version | u16 count | u16 logo_height | u16 rsvd
-    index   count * { league[8] | abbr[4] | u32 offset | u8 w | u8 h | u16 rsvd }
+    index   count * { league[8] | abbr[4] | u32 offset | u16 w | u16 h | u16 rsvd }
     blobs   per entry at ``offset``: w*h*2 RGB565 bytes, then ceil(w/8)*h mask
             bytes; mask is MSB-first, one bit per pixel (1 = opaque).
 
 Keys: ``league`` is the ESPN slug as-is (e.g. ``eng.1``, ``epl``); ``abbr`` is
-upper-cased and must fit in 4 bytes. The two fields together are the lookup key
-— that is what keeps ``eng.1:liv`` distinct from ``epl:liv``.
+upper-cased and must fit in 4 bytes; ``h`` is the entry's display height.
+league+abbr is what keeps ``eng.1:liv`` distinct from ``epl:liv``; the height
+tiebreak picks the variant a card state asks for.
 """
 
 from __future__ import annotations
@@ -39,11 +52,16 @@ from pathlib import Path
 from PIL import Image, ImageEnhance, ImageFilter
 
 MAGIC = b"NBLG"
-VERSION = 1
+VERSION = 2
 HEADER = struct.Struct("<4sHHHH")     # magic, version, count, logo_height, rsvd
 ENTRY = struct.Struct("<8s4sIHHH")     # league, abbr, offset, w, h, rsvd
 HEADER_SIZE = HEADER.size              # 12
-ENTRY_SIZE = ENTRY.size                # 20
+ENTRY_SIZE = ENTRY.size                # 22 (w/h are u16 — do not "fix" this)
+
+# Card display heights from game_strip.py: _NFL_LOGO_H, _LOGO_H_LIVE,
+# _LOGO_H_POST, _LOGO_H_PRE, _LOGO_H_BLEED. These are the only rows the
+# atlas carries — cards always draw at one of them.
+CARD_HEIGHTS = (12, 13, 19, 24, 30)
 
 # Processing knobs — keep identical to Marquee logo_pipeline.py.
 RESAMPLE = Image.LANCZOS
@@ -95,26 +113,61 @@ def encode_blob(img: Image.Image) -> tuple[int, int, bytes]:
     return w, h, bytes(out) + bytes(mask)
 
 
+def scaled_variant(img: Image.Image, logo_h: int) -> Image.Image:
+    """Resize to a card display height with game_strip._paste_logo's exact
+    math (incl. its round() banker's-rounding guard) — so the atlas carries
+    the same pixels the Python would have resampled to."""
+    if img.height > 0 and (img.width != round(img.width * logo_h / img.height)
+                            or img.height != logo_h):
+        scale = logo_h / img.height
+        lw = max(1, round(img.width * scale))
+        img = img.resize((lw, logo_h), RESAMPLE)
+    return img
+
+
+def encode_premul(img: Image.Image) -> tuple[int, int, bytes]:
+    """Card-height blob: colour = Pillow's own paste of ``img`` (soft alpha)
+    over black — the exact pixels a black card shows; mask = alpha > 0, so
+    blit_logo writes exactly the pixels Pillow blended and skips the rest.
+    """
+    w, h = img.size
+    comp = Image.new("RGB", (w, h))
+    comp.paste(img, (0, 0), img)
+    a = img.split()[3]
+    return encode_blob(Image.merge("RGBA", (*comp.split(),
+                                            a.point(lambda v: 255 if v > 0 else 0))))
+
+
 def _key(league: str, abbr: str) -> tuple[str, str]:
     return (league, abbr.upper())
 
 
-def build(entries: list[tuple[str, str, Image.Image]], height: int) -> bytes:
-    """entries: list of (league, abbr, processed RGBA Image). Returns atlas bytes."""
-    enc = [(_key(league, abbr), img) for league, abbr, img in entries]
-    enc.sort(key=lambda e: e[0])  # binary-search order
+def build(entries: list[tuple[str, str, Image.Image]],
+          height: int) -> bytes:
+    """entries: list of (league, abbr, processed RGBA Image). Returns atlas
+    bytes with one index row per (league, abbr, display height)."""
+    rows: list[tuple[tuple[str, str, int], Image.Image]] = []
+    for league, abbr, img in entries:
+        la = _key(league, abbr)
+        # every row encodes at exactly its key height (the processed art is
+        # contain-fit already; card heights are smaller, never upsized past
+        # a source a card would actually show)
+        for h in CARD_HEIGHTS:
+            rows.append(((la[0], la[1], h), scaled_variant(img, h)))
+    rows.sort(key=lambda r: r[0])  # binary-search order
 
     index = bytearray()
     blobs = bytearray()
-    data_start = HEADER_SIZE + ENTRY_SIZE * len(enc)
-    for (league, abbr), img in enc:
-        w, h, blob = encode_blob(img)
+    data_start = HEADER_SIZE + ENTRY_SIZE * len(rows)
+    for (league, abbr, h), img in rows:
+        w, bh, blob = encode_premul(img)
+        assert bh == h, f"{league}:{abbr}@{h}: encodes at {bh}"
         offset = data_start + len(blobs)
         index += ENTRY.pack(
             league.encode("ascii")[:8], abbr.encode("ascii")[:4], offset, w, h, 0
         )
         blobs += blob
-    header = HEADER.pack(MAGIC, VERSION, len(enc), height, 0)
+    header = HEADER.pack(MAGIC, VERSION, len(rows), height, 0)
     return header + bytes(index) + bytes(blobs)
 
 
@@ -126,19 +179,21 @@ def load_logo_dir(logo_dir: Path, height: int) -> list[tuple[str, str, Image.Ima
     return out
 
 
-def read(data: bytes) -> tuple[dict[tuple[str, str], dict], int]:
-    """Parse logos.bin -> ({(league, abbr): {w, h, offset, blob}}, logo_height)."""
+def read(data: bytes) -> tuple[dict[tuple[str, str, int], dict], int]:
+    """Parse logos.bin -> ({(league, abbr, h): {w, h, offset, blob}}, logo_height)."""
     magic, version, count, height, _ = HEADER.unpack_from(data, 0)
     if magic != MAGIC:
         raise ValueError(f"bad magic {magic!r}")
-    out: dict[tuple[str, str], dict] = {}
+    if version != VERSION:
+        raise ValueError(f"atlas version {version} != {VERSION}")
+    out: dict[tuple[str, str, int], dict] = {}
     for i in range(count):
         base = HEADER_SIZE + ENTRY_SIZE * i
         league, abbr, offset, w, h, _ = ENTRY.unpack_from(data, base)
         league = league.rstrip(b"\x00").decode("ascii")
         abbr = abbr.rstrip(b"\x00").decode("ascii")
         blob_len = w * h * 2 + ((w + 7) // 8) * h
-        out[(league, abbr)] = {
+        out[(league, abbr, h)] = {
             "w": w, "h": h, "offset": offset, "blob": data[offset:offset + blob_len],
         }
     return out, height
@@ -253,18 +308,22 @@ def spotcheck(cache_dir: Path, marquee_dir: Path, height: int) -> int:
     artwork since the corpus was cached) — reported, not an error."""
     ref_table, _ = read(build(load_logo_dir(marquee_dir, height), height))
     identical = changed = 0
-    for key, rec in ref_table.items():
-        stem = f"{key[0]}_{key[1].lower()}"
+    ref_keys = {(l, a) for l, a, _ in ref_table}
+    for league, abbr in sorted(ref_keys):
+        stem = f"{league}_{abbr.lower()}"
         mine, theirs = cache_dir / f"{stem}.png", marquee_dir / f"{stem}.png"
         if not mine.exists():
             continue
         if mine.read_bytes() != theirs.read_bytes():
-            print(f"  source change: {key[0]}:{key[1]} (ESPN artwork != corpus)")
+            print(f"  source change: {league}:{abbr} (ESPN artwork != corpus)")
             changed += 1
             continue
-        w, h, blob = encode_blob(process(Image.open(mine).convert("RGBA"), height))
-        assert (w, h, blob) == (rec["w"], rec["h"], rec["blob"]), \
-            f"{key}: atlas differs from Marquee-corpus render of identical source"
+        img = process(Image.open(mine).convert("RGBA"), height)
+        for ch in CARD_HEIGHTS:
+            vw, vh, vblob = encode_premul(scaled_variant(img, ch))
+            rec = ref_table[(league, abbr, ch)]
+            assert (vw, vh, vblob) == (rec["w"], rec["h"], rec["blob"]), \
+                f"{league}:{abbr}@{ch}: atlas differs from corpus render"
         identical += 1
     print(f"spot-check OK: {identical} shared keys byte-identical, "
           f"{changed} upstream artwork changes (expected: rebrands)")
@@ -297,8 +356,9 @@ def main(argv: list[str]) -> int:
         return 1
     data = build(entries, args.height)
     args.out.write_bytes(data)
-    print(f"logos.bin: {len(entries)} logos, height {args.height}, "
-          f"{args.out.stat().st_size} B")
+    n_h = len(CARD_HEIGHTS)
+    print(f"logos.bin: {len(entries)} logos x {n_h} heights = {len(entries) * n_h} rows, "
+          f"processed {args.height}, {args.out.stat().st_size} B")
 
     if args.spotcheck:
         spotcheck(args.logo_dir, args.spotcheck, args.height)

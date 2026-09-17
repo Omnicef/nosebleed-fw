@@ -81,22 +81,36 @@ What changed:
 ## §3 Logo asset format
 
 ```
-logos.bin
-├── header    magic "NBLG", version u16, count u16, logo_height u16, reserved
+logos.bin  (version 2)
+├── header    magic "NBLG", version u16=2, count u16, logo_height u16, reserved
 ├── index[]   { league[8], abbr[4], offset u32, w u16, h u16, rsvd u16 }   22 B exactly
 └── blobs     RGB565 pixels (w*h*2 B) + 1-bit alpha mask (w*h/8 B)
 ```
 
-Worst case at 32 px (a full 32×32 square): 2048 B colour + 128 B mask = 2176 B. **Measured average is ~1.8 KB**
-across the 50-logo corpus at T-3.1 — most marks are narrower than they are tall, so after the `getbbox()` trim and
-resize-to-height the width is usually under 32.
+**Version 2 (Phase 6 prerequisite).** One index row per card display height,
+not per logo. Keys are `(league, abbr, h)` sorted for binary search; `h` is
+one of the five `game_strip` display heights (12, 13, 19, 24, 30 — the sizes
+cards actually draw) and **always equals the blob's exact height**, so the
+device never resamples — the ESP32 has no LANCZOS. Display rows are
+premultiplied over black in Pillow (identically to
+`game_strip._paste_logo`'s `card.paste(logo, box, mask=logo)` onto a black
+card) and carry `mask = source alpha > 0`, so the device's masked blit
+reproduces the Python's soft-alpha blend exactly. The v1 nominal-32
+source-art rows are gone: cards never draw them, every `_paste_logo` call
+resizes first. Reader is `lib/logos/logos.h` `find(…, h, …)`; a lookup at a
+non-card height misses by design.
 
-| Scope | Teams | Projected @ 2.1 KB | **Measured @ ~1.8 KB** |
-|---|---|---|---|
-| NFL + NBA + MLB + NHL + EPL | 144 | ~306 KB | **~260 KB** |
-| + college FB, MCBB, WCBB | ~1,000 | ~2.08 MB | ~1.8 MB |
+Worst case per row (a full 30×30 square): 1800 B colour + 120 B mask.
+**Measured: 759,650 B for all five heights of 144 pro logos (~5.3 KB/team).**
 
-Comfortably inside the 2 MB `logos` partition either way.
+| Scope | Logos × heights | **Measured v2** |
+|---|---|---|
+| NFL + NBA + MLB + NHL + EPL | 144 × 5 = 720 rows | **~742 KB** |
+| + college FB, MCBB, WCBB | ~1,000 × 5 | ~5.3 MB ⚠ |
+
+Pro leagues fit the 2 MB `logos` partition with room. **The college figure
+does not** — T-11.7 needs either a wider `logos` partition (flash is 16 MB)
+or college-only at a reduced set of heights.
 
 Mapped with `esp_partition_mmap()` and read directly — no decode, no RAM copy, no warm/cold cache distinction. Flash reads go through the cache, so a miss costs a real SPI read: **keep logo access in strip rebuilds, never in the per-frame path.**
 
@@ -333,11 +347,11 @@ This phase builds the foundation everything visual sits on, **and the test harne
 **T-3.1 — `tools/build_logos.py`.** Port the *processing* half of the Python's `logo_pipeline.py` — unchanged Pillow logic: `getbbox()` trim → LANCZOS resize to target height → alpha threshold at 128 → UnsharpMask + saturation/contrast boost. Fetch team lists from ESPN's `/teams` endpoint per league.
 *Accept:* produces the same processed images the Python caches today, for a sample of 10 teams.
 
-**T-3.2 — `logos.bin` writer.** Emit the §3 format. Index sorted by `(league, abbr)` for binary search. **Key by league+abbreviation** — the Python has a fix specifically for cross-league abbreviation collisions (`eng.1_liv` vs `epl_liv`); preserve that. **Quantified at T-3.2: a bare-abbreviation key silently drops 11 of the 50 test logos**, because duplicate EPL slugs share abbreviations. Silently — no error, just missing art.
+**T-3.2 — `logos.bin` writer.** Emit the §3 format. Index sorted by `(league, abbr, height)` for binary search (v2 added the height tiebreak — §3). **Key by league+abbreviation** — the Python has a fix specifically for cross-league abbreviation collisions (`eng.1_liv` vs `epl_liv`); preserve that. **Quantified at T-3.2: a bare-abbreviation key silently drops 11 of the 50 test logos**, because duplicate EPL slugs share abbreviations. Silently — no error, just missing art.
 *Accept:* round-trips through a Python reader; index lookup returns correct offsets.
 
 **T-3.3 — Generate the pro-league atlas.** NFL, NBA, MLB, NHL, EPL.
-*Accept:* 144 logos, file size **~260 KB** (measured 258,992 B), fits the 2 MB partition with room for college later.
+*Accept:* 144 logos, file size **~260 KB** at v1 (measured 258,992 B). Rebuilt as v2 (five display heights per logo, §3) at **759,650 B**, still inside the 2 MB partition with room for a wider college partition later.
 
 **T-3.4 — mmap reader.** `esp_partition_mmap()` the `logos` partition; binary-search the index; return a pointer + dimensions. No allocation, no copy.
 *Accept:* lookup of a known team returns correct dimensions and non-null pixels. Heap usage before and after is **identical**.
@@ -616,8 +630,8 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 | All fixtures | 6 files, 1.77 MB | M |
 | **Assets** | | |
 | Logo at 32 px | 2176 B worst case, **~1.8 KB average** | M |
-| Logo atlas, 144 pro teams | **258,992 B** | M |
-| Logo atlas, ~1,000 teams incl. college | ~1.8 MB | P |
+| Logo atlas, 144 pro teams | **258,992 B** (v1) / **759,650 B** (v2, 720 rows) | M |
+| Logo atlas, ~1,000 teams incl. college | ~1.8 MB (v1) / ~5.3 MB (v2 — exceeds the 2 MB `logos` partition) | P |
 | `logos.bin` index stride | **22 B exactly**, no padding | M |
 | **Panel** | | |
 | Refresh rate | **110 Hz** at `lsbMsbTransitionBit` 1 | M |

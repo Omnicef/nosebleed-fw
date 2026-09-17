@@ -601,3 +601,42 @@ Phase 5 (data layer) is done and device-proven:
   sleep → `WiFi.setSleep(false)`, production) and its follow-up: the
   Phase 0 "1-in-3 silent boot" finding is resolved by the same fix —
   18/18 clean EN resets after (SPIKE_RESULTS amended).
+
+## Atlas v2 — per-card-height rows (2026-09-16, Phase 6 prerequisite)
+
+Phase 6 cards draw logos at five sizes (12/13/19/24/30 — game_strip's
+`_NFL_LOGO_H`/`_LOGO_H_LIVE`/`_LOGO_H_POST`/`_LOGO_H_PRE`/`_LOGO_H_BLEED`).
+The Python resizes the 32 px art per size with LANCZOS; the ESP32 has no
+resampler, so v1's single nominal row could not reproduce card art. v2 bakes
+every card size at build time:
+
+- one index row per `(league, abbr, h)` — `h` is the display height **and**
+  the exact blob height, so the reader never resamples; index sorted with the
+  height tiebreak (v1 sorted by league+abbr only).
+- every row is composited over black in Pillow and carries
+  `mask = source alpha > 0`: `card.paste(logo, box, mask=logo)` onto a black
+  card *is* premultiply, and re-quantising an already-RGB565 value is the
+  identity — so the device's masked blit reproduces the Python's soft-alpha
+  blend exactly.
+- the v1 nominal-32 source-art row is gone (cards never request it; every
+  `_paste_logo` call resizes first). `find()` at a non-card height misses by
+  design.
+- writer/reader/tests all assert `key h == blob h` and the
+  `_paste_logo` resize width math (`round(ow * h / oh)`).
+
+Measured: 144 logos × 5 heights = 720 rows, **759,650 B** (v1 was 258,992 B)
+— still inside the 2 MB partition. College at v2 (~5.3 MB) will **not** fit;
+T-11.7 needs a wider `logos` partition. PLAN §3/§6 updated.
+
+Checks:
+- `tools/test_build_logos.py`: processing parity + round-trip (every row's
+  dims match the strip math) + premul re-encode + collision keying. Green.
+- `pio test -e native` 21/21: synthetic v2 header, key-h tiebreak,
+  wrong-height miss, real `logos.bin` 720 rows, FNV-1a of PRE rows from the
+  host table, variant hits at 13/30, miss at 32. `golden_logo.h` regenerated
+  at `epl:LIV@24` (13×24), blit parity clean.
+- Device (`env:logostest` + `logos.bin` @ 0x810000):
+  `init=1 count=720`; all six PRE rows hit with host dims and hashes
+  (mlb:BOS 17×24 8294c099 … nhl:BOS 24×24 8f68df91); misses at h=32 and
+  `mlb:ZZZ`; lookup heap delta 0/0, mmap −104 B; T-3.7 frame-phase trap
+  fires as designed. RESULT: PASS.

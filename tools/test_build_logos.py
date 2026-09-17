@@ -56,29 +56,39 @@ def test_roundtrip():
     data = build_logos.build(entries, HEIGHT)
     table, height = build_logos.read(data)
     assert height == HEIGHT
-    assert len(table) == len(entries) >= 40, f"{len(table)} keys != {len(entries)} files"
+    n_h = len(build_logos.CARD_HEIGHTS)
+    assert len(table) == len(entries) * n_h >= 40, \
+        f"{len(table)} rows != {len(entries)} logos x {n_h} heights"
     assert len(entries) == len({build_logos._key(l, a) for l, a, _ in entries}), \
         "two files collapsed to one key"
-    # Each decoded blob must equal a fresh encode of the same processed image.
     for league, abbr, img in entries:
-        w, h, blob = build_logos.encode_blob(img)
-        rec = table[(league, abbr.upper())]
-        assert (rec["w"], rec["h"], rec["blob"]) == (w, h, blob), f"{league}:{abbr}"
+        la = build_logos._key(league, abbr)
+        ow, oh = img.size
+        for ch in build_logos.CARD_HEIGHTS:
+            vrec = table[(la[0], la[1], ch)]
+            # game_strip._paste_logo resize math must be respected at h.
+            assert vrec["h"] == ch, f"{league}:{abbr}@{ch} stored at {vrec['h']}"
+            assert vrec["w"] == max(1, round(ow * ch / oh)), \
+                f"{league}:{abbr}@{ch} width {vrec['w']} != strip's scale"
+            vw, _, vblob = build_logos.encode_premul(
+                build_logos.scaled_variant(img, ch))
+            assert (vrec["w"], vrec["blob"]) == (vw, vblob), f"{league}:{abbr}@{ch}"
     # Offsets must be ascending and cover the whole tail (no overlap/gaps).
     offs = sorted(v["offset"] for v in table.values())
-    assert offs[0] == build_logos.HEADER_SIZE + build_logos.ENTRY_SIZE * len(entries)
-    print(f"round-trip OK ({len(data)} B atlas)")
+    assert offs[0] == build_logos.HEADER_SIZE + build_logos.ENTRY_SIZE * len(table)
+    print(f"round-trip OK ({len(table)} rows, {len(data)} B atlas)")
 
 
 def test_collision_keying():
     entries = build_logos.load_logo_dir(LOGOS, HEIGHT)
-    keys = sorted(build_logos._key(l, a) for l, a, _ in entries)
+    H = 24  # any card height — v2 rows are card heights only
+    keys = sorted((build_logos._key(l, a) + (H,)) for l, a, _ in entries)
     # The same club (Liverpool) exists under two league slugs — a bare abbr
     # index would collapse them and lose one. league+abbr must keep both rows.
     abbr_only = {a.upper() for _, a, _ in entries}
     assert len(keys) > len(abbr_only), "data no longer contains a cross-league abbr reuse"
-    assert ("eng.1", "LIV") in keys and ("epl", "LIV") in keys
-    for want in [("eng.1", "LIV"), ("epl", "LIV")]:
+    assert ("eng.1", "LIV", H) in keys and ("epl", "LIV", H) in keys
+    for want in [("eng.1", "LIV", H), ("epl", "LIV", H)]:
         i = bisect.bisect_left(keys, want)
         assert keys[i] == want, f"binary search missed {want}"
 
@@ -87,8 +97,8 @@ def test_collision_keying():
     # Distinct keys resolve to distinct index rows (their own offsets). The
     # cached eng.1/epl artwork happens to be identical, so blobs may match —
     # the collision the key defends against is the index entry, not the pixels.
-    assert t[("eng.1", "LIV")]["offset"] != t[("epl", "LIV")]["offset"]
-    print(f"collision keying OK ({len(keys)} league+abbr keys vs "
+    assert t[("eng.1", "LIV", H)]["offset"] != t[("epl", "LIV", H)]["offset"]
+    print(f"collision keying OK ({len(keys)} league+abbr+height keys vs "
           f"{len(abbr_only)} bare-abbr; eng.1:liv/epl:liv kept separate)")
 
 

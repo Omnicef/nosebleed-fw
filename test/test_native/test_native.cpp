@@ -277,9 +277,9 @@ static uint32_t fnv1a(const uint8_t* p, size_t n) {
 
 static void test_logos_parse_host(void) {
     using namespace nb::logos;
-    static const uint8_t hdr[12] = {'N', 'B', 'L', 'G', 1, 0, 2, 0, 32, 0, 0, 0};
-    // e0: epl:LIV off=56 w=2 h=1 (px F800,07E0 + mask 0x80)
-    // e1: mlb:BOS off=61 w=1 h=1 (px 001F + mask 0x01)
+    static const uint8_t hdr[12] = {'N', 'B', 'L', 'G', 2, 0, 2, 0, 32, 0, 0, 0};
+    // e0: epl:LIV h=1 off=56 w=2 (px F800,07E0 + mask 0x80)
+    // e1: mlb:BOS h=1 off=61 w=1 (px 001F + mask 0x01)
     uint8_t idx0[22] = {0}, idx1[22] = {0};
     memcpy(idx0, "epl", 3); memcpy(idx0 + 8, "LIV", 3);
     idx0[12] = 56; idx0[16] = 2; idx0[18] = 1;
@@ -298,14 +298,15 @@ static void test_logos_parse_host(void) {
     TEST_ASSERT_EQUAL_UINT16(32, h.logo_height);
 
     Ref r;
-    TEST_ASSERT_TRUE(find(buf, h.count, "epl", "LIV", r));  // lower half
+    TEST_ASSERT_TRUE(find(buf, h.count, "epl", "LIV", 1, r));  // lower half
     TEST_ASSERT_EQUAL_UINT16(2, r.w);
     TEST_ASSERT_TRUE(memcmp(r.px, blobs, 4) == 0);
     TEST_ASSERT_EQUAL_UINT8(0x80, r.mask[0]);
-    TEST_ASSERT_TRUE(find(buf, h.count, "mlb", "BOS", r));  // upper half
+    TEST_ASSERT_TRUE(find(buf, h.count, "mlb", "BOS", 1, r));  // upper half
     TEST_ASSERT_EQUAL_UINT8(0x01, r.mask[0]);
-    TEST_ASSERT_FALSE(find(buf, h.count, "mla", "ZZZ", r));  // miss between
-    TEST_ASSERT_FALSE(find(buf, h.count, "nfl", "KC", r));   // miss above
+    TEST_ASSERT_FALSE(find(buf, h.count, "mlb", "BOS", 2, r));  // height tiebreak: wrong h misses
+    TEST_ASSERT_FALSE(find(buf, h.count, "mla", "ZZZ", 1, r));  // miss between
+    TEST_ASSERT_FALSE(find(buf, h.count, "nfl", "KC", 1, r));   // miss above
 
     // Real atlas: same checks the device runs, when the artifact exists.
     FILE* f = fopen("logos.bin", "rb");
@@ -318,19 +319,26 @@ static void test_logos_parse_host(void) {
     fclose(f);
     TEST_ASSERT_EQUAL_INT_MESSAGE(sz, got, "logos.bin short read");
     TEST_ASSERT_TRUE(parse_header(atlas, h));
-    TEST_ASSERT_EQUAL_UINT16(144, h.count);
-    struct Want { const char* l; const char* a; uint32_t hash; };
-    static const Want wants[] = {
-        {"mlb", "BOS", 0xa917f7d6u}, {"nba", "LAL", 0xeacc63aau},
-        {"epl", "LIV", 0x1b0feca6u}, {"nhl", "BOS", 0x6322ff39u},
+    TEST_ASSERT_EQUAL_UINT16(144 * 5, h.count);  // 144 logos x 5 card heights
+    struct Want { const char* l; const char* a; uint16_t h; uint32_t hash; };
+    static const Want wants[] = {  // PRE-slot rows, FNV-1a recomputed 2026-09
+        {"mlb", "BOS", 24, 0x8294c099u}, {"nba", "LAL", 24, 0x3a12ba50u},
+        {"epl", "LIV", 24, 0xb82b6b3fu}, {"nhl", "BOS", 24, 0x8f68df91u},
     };
     for (const auto& w : wants) {
-        TEST_ASSERT_TRUE_MESSAGE(find(atlas, h.count, w.l, w.a, r), w.a);
+        TEST_ASSERT_TRUE_MESSAGE(find(atlas, h.count, w.l, w.a, w.h, r), w.a);
+        TEST_ASSERT_EQUAL_UINT16_MESSAGE(w.h, r.h, w.a);
         const size_t n = static_cast<size_t>(r.w) * r.h * 2 +
                          ((static_cast<size_t>(r.w) + 7) / 8) * r.h;
         TEST_ASSERT_EQUAL_HEX32_MESSAGE(w.hash, fnv1a(r.px, n), w.a);
     }
-    TEST_ASSERT_FALSE(find(atlas, h.count, "mlb", "ZZZ", r));
+    // v2: every card display height is its own row.
+    TEST_ASSERT_TRUE(find(atlas, h.count, "epl", "LIV", 13, r));
+    TEST_ASSERT_EQUAL_UINT16(13, r.h);
+    TEST_ASSERT_TRUE(find(atlas, h.count, "epl", "LIV", 30, r));
+    TEST_ASSERT_EQUAL_UINT16(30, r.h);
+    TEST_ASSERT_FALSE(find(atlas, h.count, "mlb", "BOS", 32, r));  // not a card height
+    TEST_ASSERT_FALSE(find(atlas, h.count, "mlb", "ZZZ", 24, r));
     free(atlas);
 }
 

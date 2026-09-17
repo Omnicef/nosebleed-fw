@@ -63,10 +63,12 @@ inline bool init_mmap(const char* label = "logos") {
 }
 
 // The one legal lookup entry point (asserts the T-3.7 phase discipline).
-inline bool lookup(const char* league, const char* abbr, Ref& out) {
+// `h` is the display height the caller wants: v2 keeps one row per
+// (league, abbr, height), and a wrong-h lookup misses on purpose.
+inline bool lookup(const char* league, const char* abbr, uint16_t h, Ref& out) {
     assert_lookup_allowed();
     if (!table().ready) return false;
-    return find(table().base, table().count, league, abbr, out);
+    return find(table().base, table().count, league, abbr, h, out);
 }
 
 }  // namespace logos
