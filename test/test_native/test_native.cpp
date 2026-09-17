@@ -43,6 +43,7 @@
 #include "logos.h"
 #include "png_writer.h"
 #include "primitives.h"
+#include "scoreboard_widget.h"
 
 using namespace nb;
 
@@ -1250,6 +1251,134 @@ static void test_game_card_live_periodclock(void) {
     }
 }
 
+static void fill_scoreboard_game(data::Game& g, const char* id, uint8_t status, const char* away_id,
+                                 const char* away_abbr, const char* home_id, const char* home_abbr,
+                                 int16_t away_score, int16_t home_score) {
+    using namespace data;
+    std::memset(&g, 0, sizeof g);
+    copy_str(g.id, sizeof g.id, id);
+    g.status = status;
+    copy_str(g.status_display, sizeof g.status_display, status == kStatusPost ? "FINAL" : "LIVE");
+    g.period = kNoInt;
+    g.away_score = away_score;
+    g.home_score = home_score;
+    g.start_utc = 1700000000;
+    copy_str(g.away.id, sizeof g.away.id, away_id);
+    copy_str(g.away.name, sizeof g.away.name, away_abbr);
+    copy_str(g.away.abbr, sizeof g.away.abbr, away_abbr);
+    g.away.colour = 0x123456;
+    copy_str(g.home.id, sizeof g.home.id, home_id);
+    copy_str(g.home.name, sizeof g.home.name, home_abbr);
+    copy_str(g.home.abbr, sizeof g.home.abbr, home_abbr);
+    g.home.colour = 0x654321;
+}
+
+static bool canvas_has_ink(const Canvas16& c) {
+    for (int i = 0; i < c.w * c.h; ++i)
+        if (c.px[i] != 0) return true;
+    return false;
+}
+
+static void test_scoreboard_widget(void) {
+    using namespace data;
+    static DataCache cache;
+
+    int league = -1;
+    for (int i = 0; i < DataCache::kLeagues; ++i) {
+        if (std::strcmp(config::kLeagueSlugs[i], "mlb") == 0) {
+            league = i;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(league >= 0);
+
+    GameList* w = cache.writable(league);
+    w->count = 3;
+    fill_scoreboard_game(w->games[0], "101", kStatusPre, "awayA", "AAA", "homeB", "BBB", kNoInt, kNoInt);
+    fill_scoreboard_game(w->games[1], "102", kStatusIn, "awayC", "CCC", "home99", "DDD", 2, 4);
+    fill_scoreboard_game(w->games[2], "103", kStatusPost, "awayE", "EEE", "homeF", "FFF", 5, 1);
+    cache.publish(league, 1000);
+
+    bool enabled = true;
+    const render::LocalTime local{4, 2025, 12, 25, 15, 30};
+    render::LogoResolver logos{nullptr, &null_logo};
+    render::ScoreboardWidget widget(&cache, league, "mlb", &enabled, logos, &fixed_local,
+                                const_cast<render::LocalTime*>(&local));
+
+    TEST_ASSERT_EQUAL_STRING("scoreboard_mlb", widget.id());
+    TEST_ASSERT_TRUE(widget.is_visible(1000));
+
+    Canvas16 cards[3];
+    for (Canvas16& c : cards) {
+        c = canvas_alloc(render::CARD_W, GOLDEN_H);
+        TEST_ASSERT_TRUE(c.valid());
+    }
+    TEST_ASSERT_EQUAL_INT(3, widget.cards(cards, 3, 1000));
+    for (Canvas16& c : cards) TEST_ASSERT_TRUE_MESSAGE(canvas_has_ink(c), "scoreboard card blank");
+
+    const uint32_t plain_key = widget.cards_key(1000);
+    TEST_ASSERT_EQUAL_UINT32(plain_key, widget.cards_key(2000));
+    TEST_ASSERT_FALSE(widget.has_live_priority_games());
+
+    const char* favs[] = {"home99"};
+    widget.set_priority_team_ids(favs, 1);
+    TEST_ASSERT_TRUE(widget.has_live_priority_games());
+    const uint32_t prio_key = widget.cards_key(1000);
+    TEST_ASSERT_TRUE_MESSAGE(plain_key != prio_key, "priority reorder did not change cards_key");
+
+    w = cache.writable(league);
+    w->count = 3;
+    fill_scoreboard_game(w->games[0], "101", kStatusPre, "awayA", "AAA", "homeB", "BBB", kNoInt, kNoInt);
+    fill_scoreboard_game(w->games[1], "102", kStatusIn, "awayC", "CCC", "home99", "DDD", 3, 4);
+    fill_scoreboard_game(w->games[2], "103", kStatusPost, "awayE", "EEE", "homeF", "FFF", 5, 1);
+    cache.publish(league, 2000);
+    const uint32_t score_key = widget.cards_key(1000);
+    TEST_ASSERT_TRUE_MESSAGE(score_key != prio_key, "score change did not change cards_key");
+
+    w = cache.writable(league);
+    w->count = 1;
+    fill_scoreboard_game(w->games[0], "201", kStatusIn, "awayG", "GGG", "home99", "DDD", 7, 8);
+    w->games[0].has_situation = 1;
+    w->games[0].situation.balls = 1;
+    w->games[0].situation.strikes = 2;
+    w->games[0].situation.outs = 0;
+    std::snprintf(w->games[0].clock, sizeof w->games[0].clock, "0:42");
+    cache.publish(league, 3000);
+    const uint32_t sit_key = widget.cards_key(1000);
+    TEST_ASSERT_TRUE_MESSAGE(sit_key != score_key, "situation change did not change cards_key");
+
+    w = cache.writable(league);
+    w->count = 1;
+    fill_scoreboard_game(w->games[0], "201", kStatusIn, "awayG", "GGG", "home99", "DDD", 7, 8);
+    w->games[0].has_situation = 1;
+    w->games[0].situation.balls = 1;
+    w->games[0].situation.strikes = 2;
+    w->games[0].situation.outs = 0;
+    std::snprintf(w->games[0].clock, sizeof w->games[0].clock, "0:31");
+    cache.publish(league, 4000);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(sit_key, widget.cards_key(1000), "clock tick changed cards_key");
+
+    w = cache.writable(league);
+    w->count = 0;
+    cache.publish(league, 5000);
+    TEST_ASSERT_FALSE(widget.is_visible(5000));
+    TEST_ASSERT_EQUAL_INT(0, widget.cards(cards, 3, 5000));
+
+    w = cache.writable(league);
+    w->count = 1;
+    fill_scoreboard_game(w->games[0], "301", kStatusIn, "awayH", "HHH", "home99", "DDD", 0, 0);
+    cache.publish(league, 6000);
+    enabled = false;
+    TEST_ASSERT_FALSE(widget.is_visible(6000));
+    TEST_ASSERT_EQUAL_INT(0, widget.cards(cards, 3, 6000));
+    TEST_ASSERT_FALSE(widget.has_live_priority_games());
+    enabled = true;
+    TEST_ASSERT_TRUE(widget.is_visible(6000));
+    TEST_ASSERT_TRUE(widget.has_live_priority_games());
+
+    for (Canvas16& c : cards) canvas_free(c);
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -1327,6 +1456,7 @@ int main(void) {
     RUN_TEST(test_data_norm_golden);
     RUN_TEST(test_data_date_window);
     RUN_TEST(test_data_poll_scheduler);
+    RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
     return UNITY_END();
 }
