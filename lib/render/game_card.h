@@ -18,6 +18,7 @@
 
 #include "card_producer.h"
 #include "local_time.h"
+#include "situation.h"
 
 namespace nb {
 namespace render {
@@ -147,7 +148,7 @@ void render_game_card_post(Canvas16& out, const data::Game& game, const char* le
 }
 
 void render_game_card_live(Canvas16& out, const data::Game& game, const char* league,
-                           const LogoResolver& logos) {
+                           const LogoResolver& logos, bool show_situation = true) {
     clear_card(out);
 
     constexpr int score_y = (LOGO_H_LIVE > 12) ? (LOGO_H_LIVE - 12) / 2 : 0;
@@ -162,6 +163,7 @@ void render_game_card_live(Canvas16& out, const data::Game& game, const char* le
     score_str(game.home_score, home_score, sizeof home_score);
     const int home_sw = text_width(FONT_SPLEEN_6X12, static_cast<int>(std::strlen(home_score)));
     draw_text(out, FONT_SPLEEN_6X12, CARD_W - home_w - 2 - home_sw, score_y, home_score, COLOR_WHITE);
+    if (show_situation) draw_indicator(out, game, league);
 }
 
 }  // namespace render

@@ -708,3 +708,21 @@ Added `tools/gen_game_live_golden.py` and `test_game_card_live`.
 Checks:
 - `pio test -e native` 26/26, zero-diff generic LIVE card parity.
 - `bash tools/check_render_purity.sh` → `purity: OK`.
+
+## T-6.6 — MLB live situation indicator (2026-09-16)
+
+Added `lib/render/situation.h` and wired it into the generic LIVE MLB card.
+The indicator draws the base diamond, outs, inning arrow/number, and ball-strike
+count using Marquee's diamond/indicator coordinates.
+
+Ported Pillow's filled polygon scanline convention into
+`fill_polygon()`, including its `ROUND_UP`/`ROUND_DOWN` behavior, horizontal
+edge handling, and corner adjustment, so the small triangle and base fills are
+pixel-exact. The 2x2 out-dot outline uses Pillow's exact 5x5 ellipse pattern.
+
+Added `tools/gen_game_live_situation_golden.py`, `golden_game_situation.h`, and
+`test_game_situation` for missing, empty, partial, and loaded base states.
+
+Checks:
+- `pio test -e native` 27/27, zero-diff MLB situation parity for all cases.
+- `bash tools/check_render_purity.sh` → `purity: OK`.

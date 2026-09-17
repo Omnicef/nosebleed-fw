@@ -35,6 +35,7 @@
 #include "golden_game_live.h"
 #include "golden_game_post.h"
 #include "golden_game_pre.h"
+#include "golden_game_situation.h"
 #include "golden_logo.h"
 #include "logo.h"
 #include "logos.h"
@@ -1052,6 +1053,76 @@ static void test_game_card_live(void) {
     canvas_free(c);
 }
 
+static void test_game_situation(void) {
+    struct SitCase {
+        const char* name;
+        const char* status;
+        int16_t period;
+        bool has_situation;
+        data::Situation sit;
+        const uint16_t* golden;
+    };
+
+    data::Situation empty{};
+    empty.balls = 2;
+    empty.strikes = 1;
+    empty.outs = 2;
+
+    data::Situation partial{};
+    partial.on_first = 1;
+    partial.on_third = 1;
+    partial.balls = 1;
+    partial.strikes = 2;
+    partial.outs = 1;
+
+    data::Situation loaded{};
+    loaded.on_first = loaded.on_second = loaded.on_third = 1;
+    loaded.balls = 3;
+    loaded.strikes = 2;
+    loaded.outs = 0;
+
+    const SitCase cases[] = {
+        {"missing", "Top 3rd", 3, false, empty, GOLDEN_GAME_SIT_MISSING},
+        {"empty", "Top 3rd", 3, true, empty, GOLDEN_GAME_SIT_EMPTY},
+        {"partial", "Bot 5th", 5, true, partial, GOLDEN_GAME_SIT_PARTIAL},
+        {"loaded", "Mid 7th", 7, true, loaded, GOLDEN_GAME_SIT_LOADED},
+    };
+
+    for (const SitCase& tc : cases) {
+        data::Game g{};
+        g.status = data::kStatusIn;
+        data::copy_str(g.id, sizeof g.id, "t66");
+        data::copy_str(g.status_display, sizeof g.status_display, tc.status);
+        g.period = tc.period;
+        data::copy_str(g.away.abbr, sizeof g.away.abbr, "KC");
+        data::copy_str(g.home.abbr, sizeof g.home.abbr, "LAR");
+        g.away.colour = 0xe4393c;
+        g.home.colour = 0x22a7de;
+        g.away_score = 2;
+        g.home_score = 4;
+        g.has_situation = tc.has_situation ? 1 : 0;
+        g.situation = tc.sit;
+
+        render::LogoResolver logos{nullptr, &null_logo};
+        Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_GAME_SIT_H);
+        TEST_ASSERT_TRUE(c.valid());
+        render::render_game_card_live(c, g, "mlb", logos, true);
+
+        int diffs = 0;
+        for (int i = 0; i < GOLDEN_GAME_SIT_W * GOLDEN_GAME_SIT_H; ++i)
+            if (c.px[i] != tc.golden[i]) ++diffs;
+
+        uint8_t rgb[GOLDEN_GAME_SIT_W * GOLDEN_GAME_SIT_H * 3];
+        expand_to_rgb(c, rgb);
+        char out[64], msg[80];
+        std::snprintf(out, sizeof out, "test/out/game_sit_%s.png", tc.name);
+        TEST_ASSERT_TRUE_MESSAGE(write_png_rgb(out, GOLDEN_GAME_SIT_W, GOLDEN_GAME_SIT_H, rgb), out);
+        std::snprintf(msg, sizeof msg, "%s situation parity: px differ", tc.name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, msg);
+        canvas_free(c);
+    }
+}
+
 static void fill_card(Canvas16& c, uint16_t color) {
     for (int y = 0; y < c.h; ++y)
         for (int x = 0; x < c.w; ++x) c.set(x, y, color);
@@ -1111,6 +1182,7 @@ int main(void) {
     RUN_TEST(test_game_card_pre);
     RUN_TEST(test_game_card_final);
     RUN_TEST(test_game_card_live);
+    RUN_TEST(test_game_situation);
     RUN_TEST(test_blit_logo_parity);
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);
