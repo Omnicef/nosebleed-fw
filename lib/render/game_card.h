@@ -199,6 +199,203 @@ inline void draw_possession_football(Canvas16& c, int x, int y) {
     line(c, x + 2, y + 1, x + 2, y + 2, COLOR_WHITE);
 }
 
+inline bool is_periodclock_league(const char* league) {
+    if (league == nullptr) return false;
+    return std::strcmp(league, "nhl") == 0 || std::strcmp(league, "nba") == 0 ||
+           std::strcmp(league, "mens-college-basketball") == 0 ||
+           std::strcmp(league, "womens-college-basketball") == 0 ||
+           std::strcmp(league, "epl") == 0 || std::strcmp(league, "eng.1") == 0 ||
+           std::strcmp(league, "usa.1") == 0 || std::strcmp(league, "esp.1") == 0 ||
+           std::strcmp(league, "ger.1") == 0 || std::strcmp(league, "ita.1") == 0 ||
+           std::strcmp(league, "fra.1") == 0 || std::strcmp(league, "mex.1") == 0;
+}
+
+inline bool is_nba_periodclock_league(const char* league) {
+    return league != nullptr &&
+           (std::strcmp(league, "nba") == 0 || std::strcmp(league, "mens-college-basketball") == 0 ||
+            std::strcmp(league, "womens-college-basketball") == 0);
+}
+
+inline char ascii_lower(char ch) {
+    return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch;
+}
+
+inline bool contains_ci(const char* s, const char* needle_lower) {
+    if (s == nullptr || needle_lower == nullptr) return false;
+    for (; *s != '\0'; ++s) {
+        const char* h = s;
+        const char* n = needle_lower;
+        while (*h != '\0' && *n != '\0' && ascii_lower(*h) == *n) {
+            ++h;
+            ++n;
+        }
+        if (*n == '\0') return true;
+    }
+    return false;
+}
+
+inline void ascii_strip(const char* src, char* dst, size_t cap) {
+    if (src == nullptr || dst == nullptr || cap == 0) {
+        if (dst != nullptr && cap > 0) dst[0] = '\0';
+        return;
+    }
+    while (*src != '\0' && (*src == ' ' || (*src >= '\t' && *src <= '\r'))) ++src;
+    size_t len = std::strlen(src);
+    while (len > 0 && (src[len - 1] == ' ' || (src[len - 1] >= '\t' && src[len - 1] <= '\r'))) --len;
+    const size_t copy = len < cap - 1 ? len : cap - 1;
+    std::memcpy(dst, src, copy);
+    dst[copy] = '\0';
+}
+
+inline void nhl_period_str(int16_t period, char* dst, size_t cap) {
+    if (period == data::kNoInt) {
+        dst[0] = '\0';
+        return;
+    }
+    switch (period) {
+        case 1: std::snprintf(dst, cap, "P1"); return;
+        case 2: std::snprintf(dst, cap, "P2"); return;
+        case 3: std::snprintf(dst, cap, "P3"); return;
+        case 4: std::snprintf(dst, cap, "OT"); return;
+        case 5: std::snprintf(dst, cap, "SO"); return;
+        default: std::snprintf(dst, cap, "OT%d", static_cast<int>(period) - 3); return;
+    }
+}
+
+inline void nba_period_str(int16_t period, char* dst, size_t cap) {
+    if (period == data::kNoInt) {
+        dst[0] = '\0';
+        return;
+    }
+    const int p = static_cast<int>(period);
+    if (p <= 4) {
+        std::snprintf(dst, cap, "Q%d", p);
+    } else if (p == 5) {
+        std::snprintf(dst, cap, "OT");
+    } else {
+        std::snprintf(dst, cap, "%dOT", p - 4);
+    }
+}
+
+inline void soccer_period_str(int16_t period, const char* status_display, char* dst, size_t cap) {
+    if (contains_ci(status_display, "halftime") || contains_ci(status_display, "half time")) {
+        std::snprintf(dst, cap, "HT");
+    } else if (period == 1) {
+        std::snprintf(dst, cap, "1ST");
+    } else if (period == 2) {
+        std::snprintf(dst, cap, "2ND");
+    } else if (period != data::kNoInt) {
+        std::snprintf(dst, cap, "P%d", static_cast<int>(period));
+    } else {
+        dst[0] = '\0';
+    }
+}
+
+inline void soccer_clock_str(const data::Game& game, char* dst, size_t cap) {
+    char clock[16];
+    ascii_strip(game.clock, clock, sizeof clock);
+    if (clock[0] != '\0') {
+        const size_t len = std::strlen(clock);
+        if (clock[len - 1] == '\'') {
+            std::snprintf(dst, cap, "%s", clock);
+        } else {
+            std::snprintf(dst, cap, "%s'", clock);
+        }
+        return;
+    }
+
+    char digits[4] = {};
+    int n = 0;
+    for (const char* p = game.status_display; *p != '\0' && n < 3; ++p) {
+        if (*p >= '0' && *p <= '9') digits[n++] = *p;
+    }
+    if (n == 0) {
+        dst[0] = '\0';
+    } else {
+        std::snprintf(dst, cap, "%s'", digits);
+    }
+}
+
+inline void format_period_clock(const data::Game& game, const char* league, char* period,
+                                size_t period_cap, char* clock, size_t clock_cap) {
+    period[0] = '\0';
+    clock[0] = '\0';
+    if (league != nullptr && std::strcmp(league, "nhl") == 0) {
+        nhl_period_str(game.period, period, period_cap);
+        std::snprintf(clock, clock_cap, "%s", game.clock);
+        return;
+    }
+    if (is_nba_periodclock_league(league)) {
+        nba_period_str(game.period, period, period_cap);
+        std::snprintf(clock, clock_cap, "%s", game.clock);
+        return;
+    }
+    soccer_period_str(game.period, game.status_display, period, period_cap);
+    soccer_clock_str(game, clock, clock_cap);
+}
+
+inline void paste_logo_bleed(Canvas16& out, bool left_side, int logo_h, const data::Team& team,
+                             const char* league, const LogoResolver& logos) {
+    const int logo_y = (static_cast<int>(out.h) - logo_h) / 2;
+
+    LogoArt art{nullptr, nullptr, 0, 0};
+    if (logos.lookup != nullptr && team.abbr[0] != '\0') {
+        art = logos.lookup(logos.ctx, league, team.abbr, logo_h);
+    }
+
+    if (art.px != nullptr && art.mask != nullptr && art.w > 0 && art.h > 0) {
+        const int paste_x =
+            left_side ? -(art.w / 4) : CARD_W - art.w + (art.w / 4);
+        blit_logo(out, paste_x, logo_y, art);
+        return;
+    }
+
+    char abbr[4];
+    const int len = abbr3(team.abbr, abbr);
+    const int text_y = logo_y + (logo_h > 8 ? (logo_h - 8) / 2 : 0);
+    const int tw = text_width(FONT_SPLEEN_5X8, len);
+    const int x = left_side ? 1 : CARD_W - tw - 1;
+    draw_text(out, FONT_SPLEEN_5X8, x, text_y, abbr, team_colour(team));
+}
+
+void render_game_card_live_periodclock(Canvas16& out, const data::Game& game, const char* league,
+                                       const LogoResolver& logos) {
+    clear_card(out);
+
+    paste_logo_bleed(out, true, LOGO_H_BLEED, game.away, league, logos);
+    paste_logo_bleed(out, false, LOGO_H_BLEED, game.home, league, logos);
+
+    char away_score[8], home_score[8], score[24];
+    score_str(game.away_score, away_score, sizeof away_score);
+    score_str(game.home_score, home_score, sizeof home_score);
+    std::snprintf(score, sizeof score, "%s-%s", away_score, home_score);
+
+    const int score_y = (static_cast<int>(out.h) / 4) - 4;
+    const int score_sw = text_width(FONT_SPLEEN_6X12, static_cast<int>(std::strlen(score)));
+    const int score_x = (CARD_W - score_sw) / 2;
+    draw_text_outlined(out, FONT_SPLEEN_6X12, score_x < 0 ? 0 : score_x,
+                       score_y > 0 ? score_y : 0, score, COLOR_WHITE, COLOR_OUTLINE);
+
+    char period_str[16], clock_str[16];
+    format_period_clock(game, league, period_str, sizeof period_str, clock_str, sizeof clock_str);
+
+    if (period_str[0] != '\0') {
+        const int pw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(period_str)));
+        const int period_x = (CARD_W - pw) / 2;
+        const int period_y = static_cast<int>(out.h) * 18 / 32;
+        draw_text_outlined(out, FONT_SPLEEN_5X8, period_x < 0 ? 0 : period_x, period_y,
+                           period_str, COLOR_DIM, COLOR_OUTLINE);
+    }
+
+    if (clock_str[0] != '\0') {
+        const int cw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(clock_str)));
+        const int clock_x = (CARD_W - cw) / 2;
+        const int clock_y = static_cast<int>(out.h) * 24 / 32;
+        draw_text_outlined(out, FONT_SPLEEN_5X8, clock_x < 0 ? 0 : clock_x, clock_y,
+                           clock_str, COLOR_WHITE, COLOR_OUTLINE);
+    }
+}
+
 void render_game_card_live_nfl(Canvas16& out, const data::Game& game, const char* league,
                                const LogoResolver& logos, bool show_situation = true) {
     clear_card(out);
@@ -261,6 +458,10 @@ void render_game_card_live(Canvas16& out, const data::Game& game, const char* le
                            const LogoResolver& logos, bool show_situation = true) {
     if (is_football_league(league)) {
         render_game_card_live_nfl(out, game, league, logos, show_situation);
+        return;
+    }
+    if (is_periodclock_league(league)) {
+        render_game_card_live_periodclock(out, game, league, logos);
         return;
     }
 

@@ -1150,12 +1150,12 @@ static void assign_card(Card& c, const Game& g, const char* league, const char* 
     c.show_situation = situation;
 }
 
-static constexpr int kCardCount = 8;
+static constexpr int kCardCount = 11;
 
-static const Game* find_nfl_live() {
+static const Game* find_live(const char* league) {
     if (g_card_snaps == nullptr) return nullptr;
     for (int lg = 0; lg < DataCache::kLeagues; ++lg) {
-        if (std::strcmp(kLeagueSlugs[lg], "nfl") != 0) continue;
+        if (std::strcmp(kLeagueSlugs[lg], league) != 0) continue;
         const GameList& list = g_card_snaps[lg];
         for (int i = 0; i < list.count; ++i) {
             if (list.games[i].status == kStatusIn) return &list.games[i];
@@ -1166,14 +1166,12 @@ static const Game* find_nfl_live() {
 }
 
 static void assign_generic_card(Card& c, const Game& g, const char* league, const char* src) {
-    const bool football = nb::render::is_football_league(league);
-    assign_card(c, g, football ? "nba" : (league ? league : ""), src);
-    if (football) {
-        copy_str(c.g.away.abbr, sizeof c.g.away.abbr, "LAL");
-        copy_str(c.g.home.abbr, sizeof c.g.home.abbr, "BOS");
-        c.g.away.colour = 0x552583;
-        c.g.home.colour = 0x007a33;
-    }
+    (void)league;
+    assign_card(c, g, "mlb", src);
+    copy_str(c.g.away.abbr, sizeof c.g.away.abbr, "LAL");
+    copy_str(c.g.home.abbr, sizeof c.g.home.abbr, "BOS");
+    c.g.away.colour = 0x552583;
+    c.g.home.colour = 0x007a33;
     derive_generic(c.g);
 }
 
@@ -1220,10 +1218,70 @@ static void fake_nfl_game(Game& g, const Game& base, int64_t now) {
     clear_situation(g);
 }
 
+static void fake_periodclock_game(Game& g, const Game& base, int64_t now, const char* away, const char* home,
+                                   uint32_t away_colour, uint32_t home_colour, int16_t away_score,
+                                   int16_t home_score, int16_t period, const char* clock,
+                                   const char* status_display) {
+    g = base;
+    copy_str(g.id, sizeof g.id, "cardtest-pc");
+    g.status = kStatusIn;
+    copy_str(g.away.id, sizeof g.away.id, away);
+    copy_str(g.home.id, sizeof g.home.id, home);
+    copy_str(g.away.abbr, sizeof g.away.abbr, away);
+    copy_str(g.home.abbr, sizeof g.home.abbr, home);
+    g.away.colour = away_colour;
+    g.home.colour = home_colour;
+    g.away_score = away_score;
+    g.home_score = home_score;
+    g.start_utc = now;
+    g.period = period;
+    copy_str(g.clock, sizeof g.clock, clock);
+    copy_str(g.status_display, sizeof g.status_display, status_display);
+    clear_situation(g);
+}
+
+static void fill_periodclock_cards(Card cards[kCardCount], const Game* first, int64_t now) {
+    Game base{};
+    if (first != nullptr) {
+        base = *first;
+    } else if (g_card_fixture != nullptr && g_card_fixture->count > 0) {
+        base = g_card_fixture->games[0];
+    } else {
+        return;
+    }
+
+    const Game* live = find_live("nhl");
+    if (live != nullptr) {
+        assign_card(cards[8], *live, "nhl", "cache");
+    } else {
+        assign_card(cards[8], base, "nhl", "derived");
+        fake_periodclock_game(cards[8].g, base, now, "LAL", "VGK", 0xe4393c, 0x22a7de, 3, 2, 3, "14:22", "3rd");
+    }
+    cards[8].show_situation = false;
+
+    live = find_live("nba");
+    if (live != nullptr) {
+        assign_card(cards[9], *live, "nba", "cache");
+    } else {
+        assign_card(cards[9], base, "nba", "derived");
+        fake_periodclock_game(cards[9].g, base, now, "BOS", "LAL", 0x22a7de, 0xe4393c, 101, 98, 5, "2:30", "OT");
+    }
+    cards[9].show_situation = false;
+
+    live = find_live("epl");
+    if (live != nullptr) {
+        assign_card(cards[10], *live, "epl", "cache");
+    } else {
+        assign_card(cards[10], base, "epl", "derived");
+        fake_periodclock_game(cards[10].g, base, now, "ARS", "CHE", 0xe4393c, 0x22a7de, 1, 0, 2, "67'", "67'");
+    }
+    cards[10].show_situation = false;
+}
+
 static void fill_nfl_gridiron_cards(Card cards[kCardCount], const Game* first, int64_t now) {
     Game base{};
     const char* src = nullptr;
-    const Game* nfl_live = find_nfl_live();
+    const Game* nfl_live = find_live("nfl");
 
     if (nfl_live != nullptr) {
         base = *nfl_live;
@@ -1257,9 +1315,10 @@ static void fill_nfl_gridiron_cards(Card cards[kCardCount], const Game* first, i
 
 static void build_cards(Card cards[kCardCount]) {
     static const char* kLabels[kCardCount] = {
-        "PRE", "FINAL", "LIVE generic", "MLB live diamond",
+        "PRE", "FINAL", "LIVE generic (MLB no-sit)", "MLB live diamond",
         "NFL gridiron away", "NFL gridiron home", "NFL gridiron no-situation",
-        "NFL gridiron redzone",
+        "NFL gridiron redzone", "NHL period-clock", "NBA period-clock",
+        "Soccer period-clock",
     };
     for (int i = 0; i < kCardCount; ++i) cards[i].label = kLabels[i];
 
@@ -1285,8 +1344,7 @@ static void build_cards(Card cards[kCardCount]) {
                     assign_card(cards[1], g, league, "cache");
                     got[1] = true;
                 }
-                if (!got[2] && g.status == kStatusIn && std::strcmp(league, "mlb") != 0 &&
-                    !nb::render::is_football_league(league)) {
+                if (!got[2] && g.status == kStatusIn && std::strcmp(league, "mlb") == 0 && !g.has_situation) {
                     assign_card(cards[2], g, league, "cache");
                     got[2] = true;
                 }
@@ -1346,6 +1404,7 @@ static void build_cards(Card cards[kCardCount]) {
     }
 
     fill_nfl_gridiron_cards(cards, first, now);
+    fill_periodclock_cards(cards, first, now);
 }
 
 static void draw_card(const Card& card, nb::Canvas16& c) {
