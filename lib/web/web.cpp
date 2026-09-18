@@ -14,10 +14,12 @@
 #include <new>
 
 #include <cstring>
+#include <memory>
 
 #include "../config/config.h"
 #include "../config/store.h"
 #include "../data/espn.h"
+#include "../render/scroll.h"
 
 #ifndef NB_FW_VERSION
 #define NB_FW_VERSION "dev"
@@ -404,6 +406,85 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
     send_json(request, 200, d);
 }
 
+// ─── T-8.6 — /preview (24-bit BMP, 54-byte header, no zlib) ──────────────
+
+const render::StripHolder* g_strip = nullptr;
+void (*g_show_ip_hook)() = nullptr;
+
+void put16(uint8_t* p, uint16_t v) {
+    p[0] = v & 0xFF;
+    p[1] = v >> 8;
+}
+void put32(uint8_t* p, uint32_t v) {
+    p[0] = v & 0xFF;
+    p[1] = (v >> 8) & 0xFF;
+    p[2] = (v >> 16) & 0xFF;
+    p[3] = v >> 24;
+}
+
+// Response-owned PSRAM buffer: the chunked filler's std::function keeps the
+// shared_ptr alive exactly as long as the socket flush needs it — no static
+// buffer to race, no leak. (send(uint8_t*,len) would alias: v3's
+// AsyncProgmemResponse stores the pointer without copying.)
+struct BmpBuf {
+    uint8_t* p = nullptr;
+    size_t n = 0;
+    ~BmpBuf() { heap_caps_free(p); }
+};
+
+void handle_preview_get(AsyncWebServerRequest* request) {
+    if (g_strip == nullptr) {
+        request->send(503, "application/json", "{\"error\":\"preview not wired\"}");
+        return;
+    }
+    const render::Strip* s = g_strip->front();
+    if (s == nullptr || !s->canvas.valid()) {
+        request->send(503, "application/json", "{\"error\":\"no strip yet\"}");
+        return;
+    }
+    const int w = s->canvas.w, h = s->canvas.h;
+    const uint32_t row = (static_cast<uint32_t>(w) * 3 + 3) & ~3U;
+    const uint32_t img = row * static_cast<uint32_t>(h);
+    auto bmp = std::make_shared<BmpBuf>();
+    bmp->n = 54 + img;
+    bmp->p = static_cast<uint8_t*>(heap_caps_malloc(bmp->n, MALLOC_CAP_SPIRAM));
+    if (bmp->p == nullptr) {
+        request->send(500, "application/json", "{\"error\":\"preview alloc failed\"}");
+        return;
+    }
+    uint8_t* b = bmp->p;
+    put16(b + 0, 0x424D);  // 'BM'
+    put32(b + 2, static_cast<uint32_t>(bmp->n));
+    put32(b + 10, 54);              // pixel data offset
+    put32(b + 14, 40);              // BITMAPINFOHEADER
+    put32(b + 18, static_cast<uint32_t>(w));
+    put32(b + 22, static_cast<uint32_t>(h));  // positive: bottom-up rows
+    put16(b + 26, 1);                         // planes
+    put16(b + 28, 24);                        // bpp
+    put32(b + 34, img);                       // biSizeImage
+    put32(b + 38, 2835);                      // ~72 dpi
+    put32(b + 42, 2835);
+    for (uint32_t r = 0; r < static_cast<uint32_t>(h); ++r) {  // BMP row 0 = bottom
+        const int y = h - 1 - static_cast<int>(r);
+        uint8_t* dst = b + 54 + r * row;
+        for (int x = 0; x < w; ++x) {
+            uint8_t red, gr, bl;
+            nb::unpack565(s->canvas.get(x, y), red, gr, bl);
+            dst[3 * x] = bl;
+            dst[3 * x + 1] = gr;
+            dst[3 * x + 2] = red;
+        }
+        for (uint32_t p = static_cast<uint32_t>(w) * 3; p < row; ++p) dst[p] = 0;  // pad to 4
+    }
+    request->sendChunked("image/bmp",
+                         [bmp](uint8_t* dst, size_t len, size_t index) -> size_t {
+                             if (index >= bmp->n) return 0;
+                             const size_t n = len < bmp->n - index ? len : bmp->n - index;
+                             memcpy(dst, bmp->p + index, n);
+                             return n;
+                         });
+}
+
 }  // namespace
 
 bool init() {
@@ -506,6 +587,20 @@ bool init() {
         srv->addHandler(widgets_reorder);
     }
 
+    // T-8.6 — /preview as BMP; the SPA's dashboard uses the
+    // /api/system/preview alias, and its "Show IP" button the POST.
+    srv->on(AsyncURIMatcher::exact("/preview"), AsyncWebRequestMethod::HTTP_GET,
+            handle_preview_get);
+    srv->on(AsyncURIMatcher::exact("/api/system/preview"), AsyncWebRequestMethod::HTTP_GET,
+            handle_preview_get);
+    srv->on(AsyncURIMatcher::exact("/api/system/show-ip"), AsyncWebRequestMethod::HTTP_POST,
+            [](AsyncWebServerRequest* request) {
+                if (g_show_ip_hook != nullptr) g_show_ip_hook();
+                JsonDocument d;
+                d["ok"] = true;
+                send_json(request, 200, d);
+            });
+
     const uint32_t f3 = internal_free();
     const uint32_t l3 = internal_largest();
 
@@ -526,6 +621,9 @@ bool init() {
     g_server = srv;
     return true;
 }
+
+void set_preview_source(const render::StripHolder* holder) { g_strip = holder; }
+void set_show_ip_hook(void (*hook)()) { g_show_ip_hook = hook; }
 
 }  // namespace web
 }  // namespace nb

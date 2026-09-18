@@ -1127,3 +1127,35 @@ open looked like a poll stall. Keep one long-lived serial session.
 Checks:
 - `pio run -e esp32s3` → SUCCESS; flashed.
 - `pio test -e native` → 37/37; purity OK.
+
+## T-8.6 — /preview BMP, show-ip splash (2026-09-18)
+
+- `GET /preview` + `/api/system/preview` (the SPA dashboard binds the
+  latter): the current front strip as a 24-bit bottom-up BMP — 14+40-byte
+  header, rows padded to 4, `unpack565` → BGR, no zlib.
+- Memory model: `send(uint8_t*,len)` is NOT copy-safe (v3's
+  `AsyncProgmemResponse` stores the pointer — it is built for PROGMEM), and
+  a static PSRAM buffer would race a rebuild/realloc mid-flush. So: the BMP
+  renders into a response-owned PSRAM block (`shared_ptr<BmpBuf>` captured
+  by the `sendChunked` filler — freed exactly when the response dies).
+  Strip is only touched during the synchronous header+rows build (~ms),
+  the same rebuild race the render task already accepts.
+- `POST /api/system/show-ip` → render task scrolls the IP for 8 s
+  (T-2.9 hold-scroll-hold behavior, 20 px/s, amber 6x12 outlined, wrap-safe
+  deadline). Wiring is two boot setters in `web.h` — web never sees main's
+  globals.
+
+Hardware proof:
+
+```text
+GET /preview  -> 55,350 B = 54 + 576*32*3 exactly; BM/54/40/24bpp, dims 576x32
+                 lit-px/card [428 304 415 379 374 322 323 182] — last card is
+                 the clock: the T-8.5 reorder is visible end-to-end
+GET /api/system/preview -> 200 image/bmp (SPA dashboard path)
+POST /api/system/show-ip -> {"ok":true}, device alive, fps unaffected
+6 throttled concurrent previews + reorder mid-flush -> no crash, no reboot
+```
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS; flashed.
+- `pio test -e native` → 37/37; purity OK.
