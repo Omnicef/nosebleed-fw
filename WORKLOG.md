@@ -836,3 +836,18 @@ Checks:
 - `pio test -e native` → 37/37 (7 new Phase 7 cases).
 - `bash tools/check_render_purity.sh` → `purity: OK`.
 - `pio run -e esp32s3` + all six device test envs → SUCCESS.
+
+## CI red-X investigation + stress re-audit under load (2026-09-17)
+
+Red run 35241559376 (T-6.9) was **not a test failure**: the host-test job
+was green in that run; the X was `Build esp32s3` **cancelled** by the next
+push under `cancel-in-progress: true` ("Canceling since a higher priority
+waiting request exists"). Recorded in AGENTS.md so a superseded X is read
+as superseded, not broken. `cancel-in-progress` deliberately kept.
+
+`test_data_cache_stress` re-audited under adverse scheduling — the
+hypothesis for the (nonexistent) flake: `pio test -e native` × 25 back-to-back
+while busy-loops pinned all 14 cores. **25/25 pass**, control bites, zero
+torn reads. That is stronger evidence for the publish-by-pointer-swap +
+seqlock discipline than the original single 180 s run: the detector holds
+even when threads are preempted to starvation. No suite flake to chase.
