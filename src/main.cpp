@@ -47,6 +47,7 @@ static void heartbeat(const char* name) {
 #include "scoreboard_widget.h"
 #include "scroll.h"
 #include "strip.h"
+#include "web.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -293,11 +294,20 @@ static void task_poll(void*) {
     }
 }
 
-static void task_web(void*) { for (;;) { heartbeat("web"); vTaskDelay(pdMS_TO_TICKS(5000)); } }
+static void task_web(void*) {
+  while (WiFi.status() != WL_CONNECTED) {
+    heartbeat("web");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+  Serial.printf("[web] wifi %s\n", WiFi.localIP().toString().c_str());
+  if (!nb::web::init()) Serial.println("[web] init FAILED");
+  for (;;) {
+    heartbeat("web");
+    vTaskDelay(pdMS_TO_TICKS(5000));
+  }
+}
 
 static void task_net(void*) {
-    WiFi.mode(WIFI_STA);
-    WiFi.setSleep(false);
     bool sntp = false;
     for (;;) {
         if (WiFi.status() != WL_CONNECTED) {
@@ -344,6 +354,11 @@ void setup() {
   if (!g_builder.init_scratch(nb::render::kMaxStripCards,
                               static_cast<uint16_t>(nb::panel::height())))
     Serial.println("strip scratch alloc FAILED");
+
+  // Start the network stack before any server task can bind: LwIP's tcpip
+  // thread is created here, and AsyncTCP's begin() asserts if it is absent.
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.

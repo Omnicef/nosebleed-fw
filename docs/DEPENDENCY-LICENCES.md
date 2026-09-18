@@ -14,7 +14,8 @@ pulls them in.
 | `ESP32-HUB75-MatrixPanel-DMA` (mrcodetastic) | 3.0.15 | MIT | ✅ | `library.properties`; added Phase 2 (T-2.8) |
 | `ArduinoJson` | 7.4.3 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5 |
 | `StreamUtils` (bblanchon) | 1.9.2 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5, pinned by git commit (registry cannot resolve this name/version) |
-| `ESPAsyncWebServer` (ESP32Async fork) | not yet added | **LGPL-3.0** | ✅ | **Verified** — repo `LICENSE`; added Phase 8 (T-8.1) |
+| `ESPAsyncWebServer` (ESP32Async fork) | 3.12.1 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; added Phase 8 (T-8.1), pinned to `v3.12.1` |
+| `AsyncTCP` (ESP32Async fork) | 3.5.0 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; transitive dep of ESPAsyncWebServer, pinned to `v3.5.0` |
 | `Adafruit_GFX` | **not linked** | BSD | ✅ | We build the panel lib with `-DNO_GFX` (T-0.2); GFX never linked. Row kept only because the driver is GFX-*compatible*, not because we depend on it. |
 | Arduino-ESP32 core | 3.3.11 | **LGPL-2.1-or-later** | ✅ | **Resolved** — `package.json` `license` field **and** `Arduino.h` header both say *"version 2.1 … or (at your option) any later version"* → upgrades cleanly to GPL-3.0. Was the one open question. |
 | ESP-IDF (via Arduino core) | 5.x | Apache-2.0 | ✅ (v3 only) | Core `esp32-hal` headers carry `SPDX-License-Identifier: Apache-2.0`; reconfirmed at the T-9.3 IDF conversion |
@@ -35,6 +36,8 @@ Team logos are fetched from ESPN at build time by `tools/build_logos.py` and pac
 **ESP-IDF is Apache-2.0, which is compatible with GPLv3 but *not* GPLv2.** This is the concrete reason Nosebleed is GPL-3.0 rather than GPL-2.0. Do not "simplify" to v2.
 
 **ESPAsyncWebServer is LGPL-3.0 and this project links it statically.** LGPL §4 would normally require shipping object files or relinking instructions so a user can swap in a modified library. Publishing the full source under GPLv3 satisfies that. Note this obligation would exist *even under a permissive licence* — it is a consequence of the dependency, not of our choice.
+
+**AsyncTCP is the same fork family and same LGPL-3.0 licence.** It was pulled in transitively at T-8.1 and pinned explicitly in `platformio.ini` rather than floating on the ESPAsyncWebServer dependency.
 
 **Arduino-ESP32 core is LGPL-2.1-or-later — resolved at T-1.9.** Both the
 core `package.json` (`license: LGPL-2.1-or-later`) and the `Arduino.h` header
