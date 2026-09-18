@@ -1176,3 +1176,25 @@ not a defect.
 
 Checks: firmware + SPIFFS flashed; `GET /onboard` → 200 gzip ETag
 "B2566E67", body renders the form.
+
+## T-8.8 — Appropriate Legal Notices in the SPA (2026-09-18)
+
+Added an About tab to the nav (one click, always visible) satisfying
+GPLv3 §5d on all four points:
+
+- Copyright — "Copyright © 2026 Anthony Fenech" (matches the licence's
+  apply-section).
+- No warranty — the §16 disclaimer paragraph verbatim in prose.
+- Redistributability — §0/§2 statement, GPLv3 (not "or later"), matching
+  GPL-3.0-only.
+- How to view — link to gnu.org's gpl-3.0.html + the source URL
+  (github.com/Omnicef/nosebleed-fw), and the firmware version fetched
+  live from `/api/system` so it can't drift.
+
+Also states the interface itself is GPL-3.0-only (the §5 work-licence
+point for the bundled JS/CSS). index.html 21,358→23,624 B (5,707 B gz).
+Verified: gzipped body served with the new ETag "1AF1C259" contains all
+four notices.
+
+Open (not §5d): the SPA chrome still says MARQUEE. Branding pass is
+Phase 12 territory.
