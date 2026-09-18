@@ -1198,3 +1198,24 @@ four notices.
 
 Open (not §5d): the SPA chrome still says MARQUEE. Branding pass is
 Phase 12 territory.
+
+## T-8.9 — Phase 8 close-out (2026-09-18)
+
+Phase 8 done: async server (T-8.1), gzipped SPA (T-8.2), `/api/settings` +
+`/api/system` (T-8.3), `/api/sports/*` + `/api/favorites` with enforced
+one-TLS-session (T-8.4), `/api/widgets` with live reorder and the poll-side
+config-copy fix (T-8.5), `/preview` BMP + show-ip splash (T-8.6), vendored
+onboarding page (T-8.7), GPLv3 §5d notices (T-8.8).
+
+The SPA runs against the firmware unmodified: dashboard preview, display
+screen, sports picker, drag-reorder carousel, About — all served from the
+device. Heap: full route table costs 2,464 B (was 480 B), server total
+24.5 KB after begin, ~102 KB internal free / 61 KB largest block with
+WiFi + panel + poll + web all live — inside the 20–40 KB web budget.
+
+Deferred by build order, not by omission: `/api/net/connect` + captive
+portal (T-9.1) and the structural-change restart banner's boot-accurate
+snapshot (RAM-sticky flag matches Marquee).
+
+CI: T-8.3..T-8.8 green on main (T-8.7 run cancelled-in-progress by the
+T-8.8 push, its checks ran inside T-8.8's run).
