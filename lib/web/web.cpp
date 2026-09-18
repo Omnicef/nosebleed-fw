@@ -521,6 +521,14 @@ bool init() {
         };
         srv->on(AsyncURIMatcher::exact("/"), AsyncWebRequestMethod::HTTP_GET, serve_index);
         srv->on(AsyncURIMatcher::exact("/index.html"), AsyncWebRequestMethod::HTTP_GET, serve_index);
+        // T-8.7 — vendored onboarding page (inline CSS, no CDN; T-9.1's
+        // captive portal serves the same file from the web partition).
+        const auto serve_onboard = [](AsyncWebServerRequest* request) {
+            request->send(SPIFFS, "/onboard.html");
+        };
+        srv->on(AsyncURIMatcher::exact("/onboard"), AsyncWebRequestMethod::HTTP_GET, serve_onboard);
+        srv->on(AsyncURIMatcher::exact("/onboard.html"), AsyncWebRequestMethod::HTTP_GET,
+                serve_onboard);
     }
 
     // T-8.3 — /api/settings (GET read, PUT write) and /api/system.

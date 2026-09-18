@@ -1159,3 +1159,20 @@ POST /api/system/show-ip -> {"ok":true}, device alive, fps unaffected
 Checks:
 - `pio run -e esp32s3` → SUCCESS; flashed.
 - `pio test -e native` → 37/37; purity OK.
+
+## T-8.7 — vendored onboarding page (2026-09-18)
+
+`assets/web/onboard.html` — the AP-mode provisioning page with **zero
+external requests**: hand-written inline `<style>` (system monospace stack,
+dark, phone-sized form), plain HTML POST to `/api/net/connect`. Served at
+`/onboard` (+ `.html`) from the web partition; `pack_web.py` now packs the
+`PAGES` tuple (index 21,358→4,930 B, onboard 2,289→1,182 B).
+
+Scope kept honest: T-9.1 owns the SoftAP/captive portal and the
+`/api/net/connect` handler — this task is the vendored page itself, which
+T-9.1 serves instead of the CDN-bound SPA. `grep cdn|tailwind|alpine` on
+the served body: 0 hits. The form 404s until T-9.1 lands — build order,
+not a defect.
+
+Checks: firmware + SPIFFS flashed; `GET /onboard` → 200 gzip ETag
+"B2566E67", body renders the form.

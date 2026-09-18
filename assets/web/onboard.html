@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     T-8.7 — AP-mode onboarding page. Everything is inline: no CDN Tailwind,
+     no Alpine, no external requests. It must render and work on a phone
+     with no internet. T-9.1 (SoftAP provisioning) serves this page from
+     the captive portal and implements POST /api/net/connect; until that
+     lands the form POSTs to a 404 — the page itself is complete. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nosebleed — Wi-Fi setup</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px;
+    background: #0a0a0f; color: #e5e5e5;
+    font: 16px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { color: #fbbf24; font-size: 22px; letter-spacing: 0.2em; margin: 0 0 4px; }
+  p.sub { color: #737373; font-size: 13px; margin: 0 0 24px; }
+  label { display: block; font-size: 13px; color: #a3a3a3; margin: 16px 0 4px; }
+  input {
+    width: 100%; padding: 10px 12px;
+    background: #17171d; border: 1px solid #404040; border-radius: 6px;
+    color: #e5e5e5; font: inherit;
+  }
+  input:focus { outline: none; border-color: #f59e0b; }
+  button {
+    width: 100%; margin-top: 24px; padding: 12px;
+    background: #f59e0b; color: #000; font: inherit; font-weight: 700;
+    border: 0; border-radius: 6px; cursor: pointer;
+  }
+  button:active { background: #fbbf24; }
+  footer { margin-top: 32px; font-size: 12px; color: #525252; }
+</style>
+</head>
+<body>
+<main>
+  <h1>NOSEBLEED</h1>
+  <p class="sub">Wi-Fi setup &mdash; pick your network. 2.4&nbsp;GHz only.</p>
+  <form method="post" action="/api/net/connect">
+    <label for="ssid">Network name</label>
+    <input id="ssid" name="ssid" type="text" autocapitalize="off"
+           autocorrect="off" spellcheck="false" autocomplete="off" required>
+    <label for="pass">Password</label>
+    <input id="pass" name="pass" type="password" autocomplete="off">
+    <button type="submit">Connect</button>
+  </form>
+  <footer>Nosebleed firmware &mdash; GPL-3.0-only. Leave this page open after
+  connecting; the panel shows the new address.</footer>
+</main>
+</body>
+</html>
