@@ -17,6 +17,7 @@
 
 #include "../config/config.h"
 #include "../config/store.h"
+#include "../data/espn.h"
 
 #ifndef NB_FW_VERSION
 #define NB_FW_VERSION "dev"
@@ -121,6 +122,182 @@ void handle_system_get(AsyncWebServerRequest* request) {
     send_json(request, 200, d);
 }
 
+// ─── T-8.4 — /api/sports/*, /api/favorites ────────────────────────────────
+
+int league_idx(const String& slug) {
+    for (int i = 0; i < config::kLeagueSlugCount; ++i)
+        if (slug == config::kLeagueSlugs[i]) return i;
+    return -1;
+}
+
+void favorite_json(JsonObject d, const config::Favorite& f, int id) {
+    d["id"] = id;
+    d["league"] = f.league;
+    d["team_id"] = f.team_id;
+    d["team_name"] = f.team_name;
+    d["team_abbr"] = f.team_abbr;
+}
+
+void handle_leagues_get(AsyncWebServerRequest* request) {
+    config::Config c;
+    config::load(c);
+    JsonDocument d;
+    JsonArray a = d.to<JsonArray>();
+    for (int i = 0; i < c.league_count; ++i) {
+        JsonObject o = a.add<JsonObject>();
+        o["id"] = c.leagues[i].id;
+        o["enabled"] = c.leagues[i].enabled != 0;
+    }
+    send_json(request, 200, d);
+}
+
+// PUT /api/sports/leagues/{id} body {"enabled": bool}. SPA defers the
+// widget consequences to restart (its own copy says so); the row persists.
+void handle_league_put(AsyncWebServerRequest* request, JsonVariant& json) {
+    const String id = request->url().substring(strlen("/api/sports/leagues/"));
+    int j = -1;
+    config::Config c;
+    config::load(c);
+    for (int i = 0; i < c.league_count; ++i)
+        if (id == c.leagues[i].id) j = i;
+    if (j < 0) {
+        request->send(404, "application/json", "{\"error\":\"unknown league\"}");
+        return;
+    }
+    if (!json.is<JsonObject>() || !json["enabled"].is<bool>()) {
+        request->send(400, "application/json", "{\"error\":\"enabled required\"}");
+        return;
+    }
+    c.leagues[j].enabled = json["enabled"].as<bool>() ? 1 : 0;
+    if (!config::save(c)) {
+        request->send(500, "application/json", "{\"error\":\"config save failed\"}");
+        return;
+    }
+    Serial.printf("[web] league %s enabled=%d\n", id.c_str(), c.leagues[j].enabled);
+    JsonDocument d;
+    d["id"] = id;
+    d["enabled"] = c.leagues[j].enabled != 0;
+    send_json(request, 200, d);
+}
+
+// GET /api/sports/{league}/teams — ESPN proxy with PSRAM cache (espn.cpp).
+void handle_teams_get(AsyncWebServerRequest* request) {
+    static const char* kPrefix = "/api/sports/";
+    static const char* kSuffix = "/teams";
+    const String url = request->url();
+    if (!url.startsWith(kPrefix) || !url.endsWith(kSuffix) ||
+        url.length() <= strlen(kPrefix) + strlen(kSuffix)) {
+        request->send(404, "application/json", "{\"error\":\"not found\"}");
+        return;
+    }
+    const String slug = url.substring(strlen(kPrefix), url.length() - strlen(kSuffix));
+    const int lg = league_idx(slug);
+    if (lg < 0) {
+        request->send(404, "application/json", "{\"error\":\"unknown league\"}");
+        return;
+    }
+    size_t len = 0;
+    const char* json = nb::data::espn_teams_json(config::kLeagueApiPaths[lg], &len);
+    if (json == nullptr || len == 0) {
+        request->send(502, "application/json", "{\"error\":\"teams fetch failed\"}");
+        return;
+    }
+    // Copy out of the PSRAM cache: the response object must own its bytes
+    // (an async flush racing a later cache refresh must never see them move).
+    String out(json, len);
+    request->send(200, "application/json", out);
+}
+
+void handle_favorites_get(AsyncWebServerRequest* request) {
+    config::Config c;
+    config::load(c);
+    JsonDocument d;
+    JsonArray a = d.to<JsonArray>();
+    for (int i = 0; i < c.favorite_count; ++i) favorite_json(a.add<JsonObject>(), c.favorites[i], i);
+    send_json(request, 200, d);
+}
+
+// POST /api/favorites {league, team_id, team_name, team_abbr}
+void handle_favorite_post(AsyncWebServerRequest* request, JsonVariant& json) {
+    if (!json.is<JsonObject>() || !json["league"].is<const char*>() ||
+        (!json["team_id"].is<const char*>() && !json["team_id"].is<int64_t>())) {
+        request->send(400, "application/json", "{\"error\":\"league and team_id required\"}");
+        return;
+    }
+    const String league = json["league"].as<const char*>();
+    if (league_idx(league) < 0) {
+        request->send(400, "application/json", "{\"error\":\"unknown league\"}");
+        return;
+    }
+    char team_id[16];
+    if (json["team_id"].is<const char*>()) {
+        strlcpy(team_id, json["team_id"], sizeof team_id);
+    } else {
+        snprintf(team_id, sizeof team_id, "%lld",
+                 static_cast<long long>(json["team_id"].as<int64_t>()));
+    }
+    config::Config c;
+    config::load(c);
+    for (int i = 0; i < c.favorite_count; ++i)
+        if (league == c.favorites[i].league && strcmp(team_id, c.favorites[i].team_id) == 0) {
+            request->send(409, "application/json", "{\"error\":\"already a favorite\"}");
+            return;
+        }
+    if (c.favorite_count >= config::kMaxFavorites) {
+        request->send(409, "application/json", "{\"error\":\"favorite list full\"}");
+        return;
+    }
+    config::Favorite& f = c.favorites[c.favorite_count];
+    strlcpy(f.league, league.c_str(), sizeof f.league);
+    strlcpy(f.team_id, team_id, sizeof f.team_id);
+    strlcpy(f.team_name,
+            json["team_name"].is<const char*>() ? json["team_name"].as<const char*>() : "",
+            sizeof f.team_name);
+    strlcpy(f.team_abbr,
+            json["team_abbr"].is<const char*>() ? json["team_abbr"].as<const char*>() : "",
+            sizeof f.team_abbr);
+    f.priority = 1;
+    const int id = c.favorite_count++;
+    if (!config::save(c)) {
+        request->send(500, "application/json", "{\"error\":\"config save failed\"}");
+        return;
+    }
+    JsonDocument d;
+    favorite_json(d.to<JsonObject>(), f, id);
+    send_json(request, 200, d);
+}
+
+// DELETE /api/favorites/{league}/{team_id}
+void handle_favorite_delete(AsyncWebServerRequest* request) {
+    static const char* kPrefix = "/api/favorites/";
+    const String url = request->url();
+    const int slash = url.indexOf('/', strlen(kPrefix));
+    if (slash < 0) {
+        request->send(404, "application/json", "{\"error\":\"not found\"}");
+        return;
+    }
+    const String league = url.substring(strlen(kPrefix), slash);
+    const String team_id = url.substring(slash + 1);
+    config::Config c;
+    config::load(c);
+    int j = -1;
+    for (int i = 0; i < c.favorite_count; ++i)
+        if (league == c.favorites[i].league && team_id == c.favorites[i].team_id) j = i;
+    if (j < 0) {
+        request->send(404, "application/json", "{\"error\":\"not a favorite\"}");
+        return;
+    }
+    for (int i = j; i + 1 < c.favorite_count; ++i) c.favorites[i] = c.favorites[i + 1];
+    c.favorite_count--;
+    if (!config::save(c)) {
+        request->send(500, "application/json", "{\"error\":\"config save failed\"}");
+        return;
+    }
+    JsonDocument d;
+    d["removed"] = true;
+    send_json(request, 200, d);
+}
+
 }  // namespace
 
 bool init() {
@@ -177,6 +354,32 @@ bool init() {
     }
     srv->on(AsyncURIMatcher::exact("/api/system"), AsyncWebRequestMethod::HTTP_GET,
             handle_system_get);
+
+    // T-8.4 — sports and favourites. Registration order matters: the exact
+    // leagues route must win over the /api/sports/ prefix (first canHandle
+    // wins in AsyncWebServer).
+    srv->on(AsyncURIMatcher::exact("/api/sports/leagues"), AsyncWebRequestMethod::HTTP_GET,
+            handle_leagues_get);
+    auto* league_put = new (std::nothrow)
+        AsyncCallbackJsonWebHandler(AsyncURIMatcher::prefix("/api/sports/leagues/"), handle_league_put);
+    if (league_put != nullptr) {
+        league_put->setMethod(AsyncWebRequestMethod::HTTP_PUT);
+        league_put->setMaxContentLength(256);
+        srv->addHandler(league_put);
+    }
+    srv->on(AsyncURIMatcher::prefix("/api/sports/"), AsyncWebRequestMethod::HTTP_GET,
+            handle_teams_get);
+    srv->on(AsyncURIMatcher::exact("/api/favorites"), AsyncWebRequestMethod::HTTP_GET,
+            handle_favorites_get);
+    auto* fav_post = new (std::nothrow)
+        AsyncCallbackJsonWebHandler(AsyncURIMatcher::exact("/api/favorites"), handle_favorite_post);
+    if (fav_post != nullptr) {
+        fav_post->setMethod(AsyncWebRequestMethod::HTTP_POST);
+        fav_post->setMaxContentLength(512);
+        srv->addHandler(fav_post);
+    }
+    srv->on(AsyncURIMatcher::prefix("/api/favorites/"), AsyncWebRequestMethod::HTTP_DELETE,
+            handle_favorite_delete);
 
     const uint32_t f3 = internal_free();
     const uint32_t l3 = internal_largest();
