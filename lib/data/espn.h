@@ -26,6 +26,20 @@ bool scoreboard_url(char* url, size_t cap, const char* slug, const char* dates =
 // receives the bytes read off the socket, whatever the outcome.
 bool espn_fetch_scoreboard(const char* url, JsonDocument& doc, size_t* wire = nullptr);
 
+// T-8.4 — team list for the web team picker: GET .../sports/{path}/teams,
+// filtered parse (id, displayName/name, abbreviation), serialized to
+// [{"id","name","abbreviation"}] in PSRAM. Returns a pointer into a
+// single-slot PSRAM cache (24 h TTL per path), *len its length; nullptr on
+// failure (transport or parse). Caller copies before returning to any other
+// request — the same web thread is the only writer, so the pointer holds
+// for the duration of the handler.
+const char* espn_teams_json(const char* path, size_t* len);
+
+// Enforced one-TLS-session-at-a-time (AGENTS). Both espn fetches take this
+// around their http_get. false = `ms` expired while another fetch held it.
+bool tls_take(int ms);
+void tls_release();
+
 // JsonDocument backed by SPIRAM. Returned by move (v7 has move semantics;
 // copies would deep-clone, moves don't).
 JsonDocument make_psram_doc();

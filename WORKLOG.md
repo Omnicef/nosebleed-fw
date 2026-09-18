@@ -1042,3 +1042,47 @@ Checks:
 - `bash tools/check_render_purity.sh` → OK.
 - clangd diagnostics on lib/web are xtensa-flag noise (`machine/endian.h`
   chain fail); pio build is the arbiter.
+
+## T-8.4 — /api/sports/*, /api/favorites (2026-09-18)
+
+SPA shapes, no redesign (`/api/sports/leagues`,
+`/api/sports/leagues/{id}`, `/api/sports/{league}/teams`,
+`/api/favorites` GET/POST/DELETE):
+
+- Leagues: GET lists the seeded `LeagueConfig` rows; PUT `{enabled}`
+  persists. Widget consequences land at restart — the SPA's own copy says
+  "New sport widgets appear after restart", parity kept.
+- Teams: `nb::data::espn_teams_json(path, &len)` in `espn.cpp` — filtered
+  ESPN `/teams` fetch (one PSRAM doc, `NestingLimit(20)` reused via
+  `parse_scoreboard`), serialized `[{id,name,abbreviation}]` into a growing
+  PSRAM buffer, single-slot 24 h cache. The web handler copies into a String
+  before `send()` so an async flush can never outlive a later cache refresh.
+- **TLS mutex is now enforced, not just disciplined**: `tls_take(10000)` /
+  `tls_release()` wrap every `http_get` inside `espn_fetch_scoreboard` and
+  `espn_teams_json` (AGENTS one-session rule; poll vs team-picker contention
+  point). Handler blocks on the async_tcp thread ≤10 s worst case — the
+  picker is a user click, and 502 on timeout.
+- Favorites: index-as-id (SPA uses `fav.id` only as a key), dup POST → 409,
+  full list → 409, unknown league → 400/404. `task_poll` now calls
+  `boot_apply_favorites()` every pass and folds favourite `team_id`s into
+  the strip key — favourites take effect on the next poll pass, no reboot
+  (T-7.5 preemption).
+- Route order: exact `/api/sports/leagues` before prefix `/api/sports/`
+  (AsyncWebServer is first-`canHandle`-wins). `pathArg()` was not used — it
+  needs `ASYNCWEBSERVER_REGEX`; URL tails are parsed by hand instead.
+
+Hardware proof:
+
+```text
+GET/PUT leagues                -> epl enable/disable round-trips; unknown -> 404
+POST /api/favorites NYY 33     -> {"id":0,...}; dup -> 409; DELETE -> {"removed":true}
+GET /api/sports/mlb/teams      -> 30 teams (ARI first); epl 20; cached second call instant
+GET /api/sports/nba2/teams     -> 404
+favorites after real reboot    -> intact; poll+strip rebuild clean (8 cards, w=576)
+free_heap after teams fetch    -> 98,408 B internal
+```
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS; flashed; T-8.3 CI green.
+- `pio test -e native` → 37/37.
+- `bash tools/check_render_purity.sh` → OK.

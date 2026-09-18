@@ -147,6 +147,11 @@ static uint32_t boot_strip_key(nb::render::CardProducer* const* ps, int n, int64
     }
     h = h * 31u + g_cfg.hw.card_gap + g_cfg.hw.display_mode * 256u +
         g_cfg.hw.preemption_enabled * 512u;
+    for (int f = 0; f < g_cfg.favorite_count; ++f)  // T-8.4: favourites reorder the strip
+        for (const char* p = g_cfg.favorites[f].team_id; *p != '\0'; ++p) {
+            h ^= static_cast<uint8_t>(*p);
+            h *= 16777619u;
+        }
     return h;
 }
 
@@ -280,6 +285,7 @@ static void task_poll(void*) {
                           static_cast<unsigned>(wire));
         }
         const int64_t now2 = time(nullptr);
+        boot_apply_favorites();  // T-8.4: /api/favorites applies on the next pass
         nb::render::CardProducer* ps[kLeagueSlugCount + 1];
         const int n = boot_producers(ps);
         const uint32_t key = boot_strip_key(ps, n, now2);
