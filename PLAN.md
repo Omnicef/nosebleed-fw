@@ -666,8 +666,10 @@ acceptance criterion, and it cannot be judged from a 4× PNG.
 | `logos.bin` index stride | **22 B exactly**, no padding | M |
 | **Panel** | | |
 | Refresh rate | **110 Hz** at `lsbMsbTransitionBit` 1 | M |
-| Card strip, 35 cards | 2520 × 32 × 2 B ≈ 158 KB, PSRAM | P |
-| Per-frame blit | 4 KB, ~120 KB/s at 30 fps | P |
+| Card strip, live config (clock + 7 MLB cards) | w=576, **36,864 B** per buffer, ×2 (StripHolder) + scratch, PSRAM. 35-card/158 KB full-config figure stays P | M |
+| Per-frame blit | 4 KB at measured 30.3 fps ≈ **124 KB/s** | M |
+| Render frame pacing | **sustained 30.3 fps** through a poll cycle; worst steady-state frame gap **34 ms**. Fixed 33 ms notify timeout paced at 27.8 fps; pacer now budgets 33 ms − busy | M |
+| Render blocked in `Serial.printf` on USB churn | **~2,035 ms** per CDC event — fixed by `setTxTimeoutMs(0)`; worst gap across a 10 s port detach then 33 ms | M |
 | **Source** | | |
 | Python being replaced | 4,253 LOC, 10 widgets | M |
 | `draw.textlength()` call sites | 27 (vs 31 `draw.text()`) — the fixed-width font argument | M |

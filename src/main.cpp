@@ -1668,13 +1668,27 @@ static void task_render(void*) {
     double scroll = 0.0;
     uint32_t seen_gen = 0, last_ms = millis(), hb = last_ms;
     nb::render::PageState pst;
+    // T-7.6 instrumentation: fps + worst frame gap per 10 s window. Any key
+    // over serial forces a 200 ms stall — the panel must HITCH, not blank
+    // (DMA refresh is autonomous).
+    uint32_t frames = 0, fps_t = last_ms;
+    uint32_t worst_gap = 0, next_wait = 1;
     for (;;) {
-        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(33))) {
+        if (Serial.available() > 0) {
+            while (Serial.available()) Serial.read();
+            Serial.println("[render] forced 200 ms stall — panel must hitch, not blank");
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        // 33 ms frame budget minus last frame's BUSY time (excluding the
+        // idle wait). Subtracting the whole period instead undershoots and
+        // ran at 55 fps — measured, not theorised.
+        if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(next_wait))) {
             nb::config::load(g_cfg);
             nb::config::apply_timezone(g_cfg.hw.timezone);
             nb::panel::set_brightness(g_cfg.hw.brightness);
             g_strip_key = 0;  // force rebuild on next poll pass
         }
+        const uint32_t t_busy = millis();
         const nb::render::Strip* s = g_holder.front();
         const int64_t now = static_cast<int64_t>(time(nullptr));
         if (s == nullptr || !s->canvas.valid()) {
@@ -1695,7 +1709,21 @@ static void task_render(void*) {
             }
             nb::panel::blit(s->canvas, -w0, 0);  // full-panel write (T-7.3 rule)
         }
+        const uint32_t t_prev = last_ms;
         last_ms = millis();
+        const uint32_t gap = last_ms - t_prev;
+        if (gap > worst_gap) worst_gap = gap;
+        const uint32_t work = last_ms - t_busy;
+        next_wait = work < 33 ? 33 - work : 1;
+        ++frames;
+        if (last_ms - fps_t >= 10000) {
+            Serial.printf("[render] %.1f fps worst-frame-gap=%lu ms heap=%lu\n",
+                          frames * 1000.0f / (last_ms - fps_t), static_cast<unsigned long>(worst_gap),
+                          static_cast<unsigned long>(esp_get_free_heap_size()));
+            frames = 0;
+            worst_gap = 0;
+            fps_t = last_ms;
+        }
         if (last_ms - hb >= 30000) { heartbeat("render"); hb = last_ms; }
     }
 }
@@ -1810,6 +1838,8 @@ static void sdkconfig_snapshot(void) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);  // render must never block on printf (T-7.6 saw
+                             // ~2 s CDC stalls on USB churn); drops instead
   delay(1500);  // let USB CDC enumerate after reset
   Serial.println();
   Serial.println("=== nosebleed-fw Phase 1 skeleton ===");

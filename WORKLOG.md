@@ -828,9 +828,9 @@ Setup inits panel (brightness clamped ≤50 % on the bench until the 4 A PSU
 is confirmed), logos mmap, PSRAM DataCache, carousel-ordered producers from
 `widgets[]` with favourites per league.
 
-**UNVERIFIED on hardware:** the stale-column behaviour of the blit path
-(host-proven via `blit_window` only — no HUB75 simulator exists, PLAN §4).
-T-7.6 (frame pacing) is open: hardware only.
+**Verified on hardware same day** — see the T-7.6/T-7.7 section below:
+no stale columns, correct wrap, sustained frame pacing measured through a
+poll cycle. T-7.3 and T-7.6 both VERIFIED ON HARDWARE.
 
 Checks:
 - `pio test -e native` → 37/37 (7 new Phase 7 cases).
@@ -851,3 +851,50 @@ while busy-loops pinned all 14 cores. **25/25 pass**, control bites, zero
 torn reads. That is stronger evidence for the publish-by-pointer-swap +
 seqlock discipline than the original single 180 s run: the detector holds
 even when threads are preempted to starvation. No suite flake to chase.
+
+## T-7.6 + T-7.7 — hardware verification, phase close (2026-09-17)
+
+First full-pipeline hardware session: panel, logos mmap, WiFi, SNTP, one
+TLS poll cycle, strip build and scroll, all in the normal-boot firmware.
+
+**T-7.3 stale-column check — VERIFIED ON HARDWARE.** Continuous scroll,
+no smearing, correct behaviour through the wrap: the full-panel repaint
+holds on the *persistent* DMA framebuffer, which is the exact condition
+host tests cannot create (they allocate a fresh canvas).
+
+**T-7.6 frame pacing — VERIFIED ON HARDWARE.** `[render] fps` window
+logging (10 s) added to `task_render`, plus a serial-keypress injector
+for the forced 200 ms stall. Panel confirmed: forced stall **hitches,
+then resumes holding the image — never blanks** (autonomous DMA refresh,
+as the architecture promises). Sustained **30.3 fps** through a poll
+cycle (`[poll] mlb ok=1 wire=268,057 B` + strip rebuild inside the fps
+windows), steady-state **worst frame gap 34 ms**, zero render-task heap
+drift. Pre-fix, the fixed 33 ms notify timeout paced at **27.8 fps** —
+just under the 28 target; pacer now budgets `33 ms − busy time` (the
+first attempt subtracted the whole period and ran the loop at 55 fps —
+feedback errors are measurable, not debatable).
+
+**Finding — a blocking log call was stalling the render task.** Two
+~2035 ms worst-frame gaps appeared in the fps log with no corresponding
+work. Cause: `Serial.printf` from `task_render` blocks in the S3 USB-CDC
+TX path while USB state churns (host open/close, detach); the default
+per-write timeout is seconds. Only surfaces with a terminal attached or
+during USB events — miserable to reproduce later, so recorded here:
+the render task's hard "never block on I/O" rule was being violated by
+its own logging. Fix is one line in `setup()`:
+`Serial.setTxTimeoutMs(0)` — writes drop instead of blocking (confirmed
+in `USBCDC.cpp`: `non_blocking` path returns when the FIFO is full).
+Re-verified by straddling a 10 s port detach inside an fps window:
+worst-frame-gap stayed at **33 ms** while logs dropped.
+
+Stacks: render min-free 5,952 B of 8 KB, web 6,484 B of 8 KB — both
+inside the >25 % headroom rule.
+
+**T-7.7 — Phase 7 closed.** All seven tasks verified: T-7.1/2/4/5 host,
+T-7.3 host + hardware, T-6 side untouched, T-7.6 hardware. PLAN §6 strip
+and per-frame blit figures promoted from projection to measured.
+
+Checks:
+- `pio test -e native` → 37/37; purity OK; `esp32s3` SUCCESS.
+- Hardware: boot → WiFi → SNTP → poll ok → `[strip] rebuilt: 8 cards,
+  w=576, pages=8` → sustained 30.3 fps; visual checks above.
