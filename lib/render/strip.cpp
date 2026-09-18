@@ -65,11 +65,28 @@ int StripBuilder::build(Strip& dst, CardProducer* const* producers,
                         const int* order, int order_count, int gap,
                         int panel_w, int64_t now_utc) {
     int n = 0;
-    for (int oi = 0; oi < order_count && n < cap_; ++oi) {
+    int oi = 0;
+    CardProducer* last_p = nullptr;
+    int last_budget = 0;
+    for (; oi < order_count && n < cap_; ++oi) {
         CardProducer* p = producers[order[oi]];
         if (p == nullptr || !p->is_visible(now_utc)) continue;
-        n += p->cards(scratch_ + n, cap_ - n, now_utc);
+        last_budget = cap_ - n;
+        const int got = p->cards(scratch_ + n, last_budget, now_utc);
+        if (got > 0) last_p = p;
+        n += got;
     }
+    // Truncation signal for the caller (lib/render cannot log). A visible
+    // producer never yields zero cards, so any visible producer left in
+    // `order` means cards were dropped. When `order` is exhausted exactly
+    // at the cap, ask the last producer for one more slot than it got —
+    // done AFTER composition below, so clobbering scratch is safe.
+    bool truncated = false;
+    for (int j = oi; !truncated && j < order_count; ++j) {
+        CardProducer* p = producers[order[j]];
+        truncated = p != nullptr && p->is_visible(now_utc);
+    }
+    truncated_ = truncated;
     canvas_free(dst.canvas);
     dst.page_count = 0;
     if (n == 0 || cap_ == 0) return 0;
@@ -85,6 +102,8 @@ int StripBuilder::build(Strip& dst, CardProducer* const* producers,
                         scratch_[i].px + static_cast<size_t>(y) * CARD_W,
                         CARD_W * sizeof(uint16_t));
     }
+    if (!truncated_ && n == cap_ && last_p != nullptr && last_budget < cap_)
+        truncated_ = last_p->cards(scratch_, last_budget + 1, now_utc) > last_budget;
     uint16_t widths[kMaxStripCards];
     for (int i = 0; i < n; ++i) widths[i] = block;
     dst.page_count = compute_pages(widths, n, panel_w, dst.page_x, kMaxStripCards);

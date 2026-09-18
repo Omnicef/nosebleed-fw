@@ -1480,10 +1480,19 @@ static void test_strip_build(void) {
     TEST_ASSERT_EQUAL_INT(144, strip.page_x[2]);
     nb::canvas_free(strip.canvas);
 
-    // Truncation at the scratch cap, no overrun.
+    // Truncation at the scratch cap, no overrun. c wants 3, gets 1 slot ->
+    // the truncated flag must be set (T-11.7 precursor: caller logs it).
     StripBuilder small;
     TEST_ASSERT_TRUE(small.init_scratch(3, 32));
     TEST_ASSERT_EQUAL_INT(3, small.build(strip, ps, order, 3, 8, 64, 100));
+    TEST_ASSERT_TRUE(small.truncated());
+    nb::canvas_free(strip.canvas);
+
+    // Exactly filling the cap must NOT report truncation: a(2)+c(3) == 5.
+    StripBuilder exact;
+    TEST_ASSERT_TRUE(exact.init_scratch(5, 32));
+    TEST_ASSERT_EQUAL_INT(5, exact.build(strip, ps, order, 3, 8, 64, 100));
+    TEST_ASSERT_FALSE(exact.truncated());
     nb::canvas_free(strip.canvas);
 
     // Nothing visible -> 0 cards, invalid canvas (render task paints black).
