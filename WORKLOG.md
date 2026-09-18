@@ -1001,3 +1001,44 @@ Checks:
 - `pio test -e native` → 37/37; `pio run -e native` → SUCCESS.
 - `bash tools/check_render_purity.sh` → OK.
 - `pio run -e esp32s3` → SUCCESS; RAM 15.8 %, Flash 29.5 %.
+
+## T-8.3 — /api/settings, /api/system (2026-09-18)
+
+Added to `lib/web/web.cpp` against the SPA's exact shapes (no redesign):
+
+- `GET /api/settings` — the ten fields the Display screen binds
+  (`rows…clock_24h`; `display_mode` is the `"scroll"`/`"static"` string).
+- `PUT /api/settings` — `AsyncCallbackJsonWebHandler` (v3 header:
+  `AsyncCallbackJsonWebHandler(AsyncURIMatcher, ArJsonRequestHandlerFunction)`,
+  `setMethod`, `setMaxContentLength`). Absent keys keep stored values,
+  numbers clamped (`brightness 0–100`, `scroll_speed 10–200`, `card_gap
+  0–32`, geometry sane bounds), non-object body → 400. Response
+  `{"restart_required": …}` drives the SPA banner.
+- `GET /api/system` — `ip`, `uptime_s`, `free_heap` (internal), `psram_free`,
+  `version` (`-DNB_FW_VERSION`, now in platformio.ini), `restart_required`
+  (T-4.4 flag, RAM-sticky; a reboot applies config and clears it).
+
+Routes cost 456 B of the 936 B total routes figure (was 480). Each PUT
+`config::save()` notifies the render task (T-4.3) — brightness/timezone
+apply live, verified.
+
+Hardware proof (`192.168.123.54`):
+
+```text
+GET  /api/system            -> ip/uptime/free_heap 35,120 B internal/psram/version 0.8.0
+PUT  /api/settings (full form)   -> {"restart_required":false}; GET reads brightness 70 + tz back
+PUT  /api/settings {"rows":16}   -> {"restart_required":true}; /api/system flag true
+PUT  /api/settings body [1,2]    -> 400
+```
+
+Bench config restored afterwards (rows 32, tz ""). Note the flag is sticky
+until reboot by design — 32→16→32 within one session leaves it set; a
+boot-time snapshot comparison would clear it but the boot-time hw struct is
+not visible from lib/web. Marquee behaved the same way.
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS (RAM 15.8 %, Flash 29.8 %); flashed.
+- `pio test -e native` → 37/37.
+- `bash tools/check_render_purity.sh` → OK.
+- clangd diagnostics on lib/web are xtensa-flag noise (`machine/endian.h`
+  chain fail); pio build is the arbiter.
