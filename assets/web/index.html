@@ -283,6 +283,36 @@
     </div>
   </section>
 
+  <!-- ═══════════════════════════════════════════════════════════ ABOUT -->
+  <!-- T-8.8 — GPLv3 §5d Appropriate Legal Notices: copyright, no warranty,
+       redistributability under GPLv3, and how to view the licence. -->
+  <section x-show="activeTab === 'about'"
+           x-data="about()" x-init="load()" class="space-y-4 text-sm leading-relaxed">
+    <div class="bg-black rounded border border-gray-800 p-4 space-y-3">
+      <p class="text-amber-300 font-bold">
+        Nosebleed <span x-show="version" class="text-gray-400">firmware <span x-text="version"></span></span>
+      </p>
+      <p>Copyright &copy; 2026 Anthony Fenech</p>
+      <p>This program is free software: you can redistribute it and/or modify
+         it under the terms of the GNU General Public License as published by
+         the Free Software Foundation, version 3 of the License.</p>
+      <p>This program is distributed in the hope that it will be useful,
+         but WITHOUT ANY WARRANTY; without even the implied warranty of
+         MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+         GNU General Public License for more details.</p>
+      <p>You should have received a copy of the GNU General Public License
+         along with this program. If not, see
+         <a href="https://www.gnu.org/licenses/gpl-3.0.html"
+            class="text-amber-400 underline">https://www.gnu.org/licenses/gpl-3.0.html</a>.
+         The complete source is available at
+         <a href="https://github.com/Omnicef/nosebleed-fw"
+            class="text-amber-400 underline">https://github.com/Omnicef/nosebleed-fw</a>.</p>
+      <p class="text-xs text-gray-500">This interface (including its bundled
+         JavaScript and CSS) is part of Nosebleed and is covered by the same
+         GPL-3.0-only licence.</p>
+    </div>
+  </section>
+
 </div>
 
 <script>
@@ -294,6 +324,7 @@ function app() {
       { id: 'display',   label: 'Display'   },
       { id: 'sports',    label: 'Sports'    },
       { id: 'carousel',  label: 'Carousel'  },
+      { id: 'about',     label: 'About'     },
     ],
     init() {},
   };
@@ -497,6 +528,18 @@ function carousel() {
           body: JSON.stringify({ ids: this.widgets.map(w => w.id) }),
         });
       } catch(e) { this.error = 'Reorder failed: ' + e.message; }
+    },
+  };
+}
+
+function about() {
+  return {
+    version: '',
+    async load() {
+      try {
+        const r = await fetch('/api/system');
+        if (r.ok) this.version = (await r.json()).version ?? '';
+      } catch(e) { /* version is decoration; notices stand alone */ }
     },
   };
 }
