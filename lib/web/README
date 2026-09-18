@@ -1,1 +1,1 @@
-ESPAsyncWebServer v3.x bring-up and /api/* handlers (Phase 8). T-8.1 starts on port 80 after Wi-Fi connects and serves `/ping` as the static-route proof.
+ESPAsyncWebServer v3.x bring-up and /api/* handlers (Phase 8). T-8.1 starts on port 80 after Wi-Fi connects and serves `/ping`; T-8.2 mounts the `web` SPIFFS partition and serves the gzipped SPA at `/` and `/index.html`.

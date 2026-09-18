@@ -961,3 +961,43 @@ Checks:
 - `pio test -e native` → 37/37; `pio run -e native` → SUCCESS.
 - `bash tools/check_render_purity.sh` → OK.
 - `pio run -t compiledb` → refreshed after adding `lib/web`.
+
+## T-8.2 — serve the gzipped SPA (2026-09-18)
+
+Copied Marquee's SPA unchanged from `marquee/web/ui/index.html` into
+`assets/web/index.html`. `tools/pack_web.py` gzips it to
+`data/index.html.gz`, and PlatformIO runs the packer before firmware builds or
+filesystem uploads:
+
+```text
+21,358 B -> 4,930 B (23.1%)
+```
+
+The device mounts the `web` SPIFFS partition and serves the compressed file at
+`/` and `/index.html`:
+
+```text
+mounted web partition (5,271 / 956,561 B)
+server=244 B fs=4,328 B routes=480 B begin=17,504 B total=22,556 B
+free=107,668 B largest block=67,572 B
+```
+
+HTTP proof:
+
+```text
+GET /          -> 200, Content-Encoding: gzip, ETag "DCF51D4B", 4,930 B
+GET /index.html -> 200, same gzipped SPA
+GET /ping      -> 200, body "pong"
+GET /missing   -> 404
+```
+
+The first upload used `data/web/index.html.gz`, but PlatformIO uploads the
+contents of `data/` as the filesystem root. The pack target therefore became
+`data/index.html.gz`, matching the virtual path requested by
+`AsyncFileResponse`.
+
+Checks:
+- Firmware and SPIFFS filesystem uploaded over `/dev/ttyACM0`.
+- `pio test -e native` → 37/37; `pio run -e native` → SUCCESS.
+- `bash tools/check_render_purity.sh` → OK.
+- `pio run -e esp32s3` → SUCCESS; RAM 15.8 %, Flash 29.5 %.

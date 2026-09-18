@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Marquee</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen font-mono">
+
+<div class="max-w-2xl mx-auto p-6 space-y-6" x-data="app()" x-init="init()">
+
+  <!-- Header -->
+  <header class="flex items-center gap-3">
+    <span class="text-amber-400 text-2xl font-bold tracking-widest">MARQUEE</span>
+    <span class="text-gray-500 text-sm">LED Matrix Controller</span>
+  </header>
+
+  <!-- Tab nav -->
+  <nav class="flex gap-1 border-b border-gray-800">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button
+        @click="activeTab = tab.id"
+        :class="activeTab === tab.id
+          ? 'border-b-2 border-amber-400 text-amber-300'
+          : 'text-gray-500 hover:text-gray-300'"
+        class="px-4 py-2 text-sm -mb-px transition-colors"
+        x-text="tab.label">
+      </button>
+    </template>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════════════════ DASHBOARD -->
+  <section x-show="activeTab === 'dashboard'" class="space-y-4">
+    <div class="bg-black rounded border border-gray-800 p-3 flex items-center justify-center"
+         x-data="preview()" x-init="start()">
+      <img :src="src" alt="panel preview"
+           class="rounded"
+           style="image-rendering: crisp-edges; image-rendering: pixelated; width:384px; height:192px; object-fit:contain"
+           @error="onError()" />
+    </div>
+    <div x-data="actions()" class="flex items-center gap-4">
+      <button @click="showIp()"
+              class="bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded px-4 py-2 text-sm transition-colors">
+        Show IP on panel
+      </button>
+      <span x-show="ipMsg" class="text-sm text-green-400" x-text="ipMsg"></span>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════════════════ DISPLAY -->
+  <section x-show="activeTab === 'display'" x-data="settings()" x-init="load()" class="space-y-4">
+    <div x-show="restartBanner"
+         class="bg-amber-900 border border-amber-600 text-amber-200 rounded px-4 py-2 text-sm">
+      ⚠ Structural change — restart Marquee for it to take effect.
+    </div>
+    <div x-show="saved && !restartBanner"
+         class="bg-green-900 border border-green-600 text-green-200 rounded px-4 py-2 text-sm">
+      Settings saved.
+    </div>
+    <div x-show="error"
+         class="bg-red-900 border border-red-600 text-red-200 rounded px-4 py-2 text-sm"
+         x-text="error"></div>
+
+    <form @submit.prevent="save()" class="grid grid-cols-2 gap-4">
+      <label class="flex flex-col gap-1 col-span-2">
+        <span class="text-xs text-gray-400">Brightness <span class="text-gray-500">(1–100)</span></span>
+        <div class="flex items-center gap-3">
+          <input type="range" min="1" max="100" x-model.number="form.brightness"
+                 class="flex-1 accent-amber-400">
+          <span class="w-8 text-right text-amber-300" x-text="form.brightness"></span>
+        </div>
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Rows</span>
+        <input type="number" min="1" x-model.number="form.rows"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Columns</span>
+        <input type="number" min="1" x-model.number="form.cols"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Chain length</span>
+        <input type="number" min="1" x-model.number="form.chain_length"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Parallel</span>
+        <input type="number" min="1" x-model.number="form.parallel"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Boot splash duration <span class="text-gray-500">(s, 0=off)</span></span>
+        <input type="number" min="0" x-model.number="form.boot_splash_duration"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1 col-span-2">
+        <span class="text-xs text-gray-400">Timezone <span class="text-gray-500">(applies live)</span></span>
+        <select x-model="form.timezone"
+                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+          <option value="">System default</option>
+          <optgroup label="Americas">
+            <option value="America/New_York">America/New_York (ET)</option>
+            <option value="America/Chicago">America/Chicago (CT)</option>
+            <option value="America/Denver">America/Denver (MT)</option>
+            <option value="America/Los_Angeles">America/Los_Angeles (PT)</option>
+            <option value="America/Anchorage">America/Anchorage (AKT)</option>
+            <option value="Pacific/Honolulu">Pacific/Honolulu (HT)</option>
+            <option value="America/Toronto">America/Toronto (ET)</option>
+            <option value="America/Vancouver">America/Vancouver (PT)</option>
+            <option value="America/Sao_Paulo">America/Sao_Paulo (BRT)</option>
+          </optgroup>
+          <optgroup label="Europe">
+            <option value="Europe/London">Europe/London (GMT/BST)</option>
+            <option value="Europe/Paris">Europe/Paris (CET)</option>
+            <option value="Europe/Berlin">Europe/Berlin (CET)</option>
+            <option value="Europe/Moscow">Europe/Moscow (MSK)</option>
+          </optgroup>
+          <optgroup label="Asia / Pacific">
+            <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+            <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+            <option value="Asia/Bangkok">Asia/Bangkok (ICT)</option>
+            <option value="Asia/Shanghai">Asia/Shanghai (CST)</option>
+            <option value="Asia/Tokyo">Asia/Tokyo (JST)</option>
+            <option value="Asia/Seoul">Asia/Seoul (KST)</option>
+            <option value="Australia/Sydney">Australia/Sydney (AEDT)</option>
+            <option value="Pacific/Auckland">Pacific/Auckland (NZST)</option>
+          </optgroup>
+          <optgroup label="UTC">
+            <option value="UTC">UTC</option>
+          </optgroup>
+        </select>
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Game card mode <span class="text-gray-500">(applies live)</span></span>
+        <select x-model="form.display_mode"
+                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+          <option value="scroll">Scroll (ticker)</option>
+          <option value="static">Static (full card)</option>
+        </select>
+      </label>
+
+      <label class="flex flex-col gap-1" x-show="form.display_mode === 'scroll'">
+        <span class="text-xs text-gray-400">Scroll speed <span class="text-gray-500">(px/s, 10–200)</span></span>
+        <input type="number" min="10" max="200" x-model.number="form.scroll_speed"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Game spacing <span class="text-gray-500">(px, 0–32, applies live)</span></span>
+        <input type="number" min="0" max="32" x-model.number="form.card_gap"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <label class="flex items-center gap-2 col-span-2 cursor-pointer">
+        <input type="checkbox" x-model="form.clock_24h" class="accent-amber-400 w-4 h-4">
+        <span class="text-sm">24-hour clock <span class="text-gray-500 text-xs">(applies live)</span></span>
+      </label>
+
+      <div class="col-span-2 flex justify-end">
+        <button type="submit"
+                class="bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2 rounded transition-colors">
+          Save
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════ SPORTS -->
+  <section x-show="activeTab === 'sports'" x-data="sports()" x-init="load()" class="space-y-6">
+
+    <div x-show="error" class="bg-red-900 border border-red-600 text-red-200 rounded px-4 py-2 text-sm" x-text="error"></div>
+
+    <!-- League toggles -->
+    <div class="space-y-2">
+      <h3 class="text-xs uppercase tracking-widest text-gray-400">Leagues</h3>
+      <p class="text-xs text-gray-500">New sport widgets appear after restart.</p>
+      <div class="grid gap-2">
+        <template x-for="league in leagues" :key="league.id">
+          <div class="flex items-center justify-between bg-gray-900 border border-gray-800 rounded px-3 py-2">
+            <span class="text-sm uppercase" x-text="league.id"></span>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <span class="text-xs text-gray-500" x-text="league.enabled ? 'Enabled' : 'Disabled'"></span>
+              <input type="checkbox" :checked="league.enabled"
+                     @change="toggleLeague(league, $event.target.checked)"
+                     class="accent-amber-400 w-4 h-4">
+            </label>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Favorites -->
+    <div class="space-y-3">
+      <h3 class="text-xs uppercase tracking-widest text-gray-400">Favorite Teams</h3>
+
+      <!-- Add team form -->
+      <div class="flex gap-2">
+        <select x-model="pickerLeague" @change="loadTeams()"
+                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-amber-500">
+          <option value="">League…</option>
+          <template x-for="l in leagues.filter(l => l.enabled)" :key="l.id">
+            <option :value="l.id" x-text="l.id.toUpperCase()"></option>
+          </template>
+        </select>
+        <input type="text" x-model="teamSearch" @input="filterTeams()"
+               placeholder="Search team…"
+               class="flex-1 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:border-amber-500">
+      </div>
+
+      <!-- Team search results -->
+      <div x-show="filteredTeams.length > 0" class="bg-gray-900 border border-gray-700 rounded divide-y divide-gray-800 max-h-40 overflow-y-auto">
+        <template x-for="team in filteredTeams" :key="team.id">
+          <button @click="addFavorite(team)"
+                  class="w-full text-left px-3 py-2 text-sm hover:bg-gray-800 flex items-center gap-2">
+            <span class="text-amber-300 text-xs" x-text="team.abbreviation"></span>
+            <span x-text="team.name"></span>
+          </button>
+        </template>
+      </div>
+
+      <!-- Current favorites -->
+      <div class="flex flex-wrap gap-2">
+        <template x-for="fav in favorites" :key="fav.id">
+          <span class="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs">
+            <span class="text-amber-300 uppercase" x-text="fav.league"></span>
+            <span x-text="fav.team_abbr"></span>
+            <button @click="removeFavorite(fav)"
+                    class="text-gray-500 hover:text-red-400 ml-1 leading-none">&times;</button>
+          </span>
+        </template>
+        <span x-show="favorites.length === 0" class="text-xs text-gray-500">No favorites yet.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════════════════ CAROUSEL -->
+  <section x-show="activeTab === 'carousel'"
+           x-data="carousel()"
+           x-init="load()"
+           @carousel-reload.window="load()"
+           class="space-y-4">
+    <div x-show="error" class="bg-red-900 border border-red-600 text-red-200 rounded px-4 py-2 text-sm" x-text="error"></div>
+
+    <div class="space-y-2">
+      <template x-for="widget in widgets" :key="widget.id">
+        <div class="bg-gray-900 border border-gray-800 rounded px-3 py-3 flex items-center gap-3"
+             draggable="true"
+             @dragstart="draggingId = widget.id"
+             @dragover.prevent
+             @dragleave
+             @drop.prevent="drop(widget.id)"
+             :class="draggingId === widget.id ? 'opacity-40 ring-1 ring-amber-500' : ''">
+          <!-- Drag handle -->
+          <span class="cursor-grab text-gray-600 select-none text-base leading-none shrink-0">⠿</span>
+          <!-- Enable toggle -->
+          <input type="checkbox" :checked="widget.enabled"
+                 @change="patchWidget(widget, {enabled: $event.target.checked})"
+                 class="accent-amber-400 w-4 h-4 shrink-0">
+          <!-- Widget name -->
+          <span class="flex-1 text-sm" x-text="widget.id"></span>
+          <!-- Dwell input -->
+          <label class="flex items-center gap-1 text-xs text-gray-400">
+            <input type="number" min="1" step="1"
+                   :value="widget.dwell_seconds"
+                   @change="patchWidget(widget, {dwell_seconds: parseFloat($event.target.value)})"
+                   class="w-14 bg-gray-800 border border-gray-700 rounded px-1 py-0.5 text-right focus:outline-none focus:border-amber-500">
+            <span class="text-gray-500">s</span>
+          </label>
+        </div>
+      </template>
+      <p x-show="widgets.length === 0" class="text-xs text-gray-500">Loading…</p>
+    </div>
+  </section>
+
+</div>
+
+<script>
+function app() {
+  return {
+    activeTab: 'dashboard',
+    tabs: [
+      { id: 'dashboard', label: 'Dashboard' },
+      { id: 'display',   label: 'Display'   },
+      { id: 'sports',    label: 'Sports'    },
+      { id: 'carousel',  label: 'Carousel'  },
+    ],
+    init() {},
+  };
+}
+
+function preview() {
+  return {
+    src: '/api/system/preview?' + Date.now(),
+    _timer: null,
+    start() {
+      this._timer = setInterval(() => {
+        this.src = '/api/system/preview?' + Date.now();
+      }, 2000);
+    },
+    onError() {},
+  };
+}
+
+function actions() {
+  return {
+    ipMsg: '',
+    async showIp() {
+      this.ipMsg = '';
+      const r = await fetch('/api/system/show-ip', { method: 'POST' });
+      this.ipMsg = r.ok ? 'Done — check the panel.' : 'Error.';
+      setTimeout(() => { this.ipMsg = ''; }, 3000);
+    },
+  };
+}
+
+function settings() {
+  return {
+    form: {
+      rows: 32, cols: 64, chain_length: 1, parallel: 1,
+      brightness: 80, boot_splash_duration: 15, timezone: '',
+      display_mode: 'scroll', scroll_speed: 40, card_gap: 8, clock_24h: false,
+    },
+    saved: false,
+    restartBanner: false,
+    error: null,
+    async load() {
+      try {
+        const r = await fetch('/api/settings');
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        Object.assign(this.form, {
+          rows: d.rows, cols: d.cols, chain_length: d.chain_length,
+          parallel: d.parallel, brightness: d.brightness,
+          boot_splash_duration: d.boot_splash_duration,
+          timezone: d.timezone ?? '',
+          display_mode: d.display_mode ?? 'scroll',
+          scroll_speed: d.scroll_speed ?? 40,
+          card_gap: d.card_gap ?? 8,
+          clock_24h: d.clock_24h ?? false,
+        });
+      } catch(e) { this.error = 'Could not load settings: ' + e.message; }
+    },
+    async save() {
+      this.saved = false; this.restartBanner = false; this.error = null;
+      try {
+        const r = await fetch('/api/settings', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(this.form),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        this.restartBanner = d.restart_required;
+        this.saved = !d.restart_required;
+        setTimeout(() => { this.saved = false; }, 3000);
+      } catch(e) { this.error = 'Save failed: ' + e.message; }
+    },
+  };
+}
+
+function sports() {
+  return {
+    leagues: [],
+    favorites: [],
+    pickerLeague: '',
+    teamSearch: '',
+    allTeams: [],
+    filteredTeams: [],
+    error: null,
+
+    async load() {
+      try {
+        const [lr, fr] = await Promise.all([
+          fetch('/api/sports/leagues'),
+          fetch('/api/favorites'),
+        ]);
+        this.leagues = await lr.json();
+        this.favorites = await fr.json();
+      } catch(e) { this.error = 'Load failed: ' + e.message; }
+    },
+
+    async toggleLeague(league, enabled) {
+      try {
+        await fetch(`/api/sports/leagues/${league.id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ enabled }),
+        });
+        league.enabled = enabled;
+        // Notify carousel tab to reload so scoreboard widgets appear/disappear
+        window.dispatchEvent(new CustomEvent('carousel-reload'));
+      } catch(e) { this.error = 'Could not update league: ' + e.message; }
+    },
+
+    async loadTeams() {
+      if (!this.pickerLeague) { this.allTeams = []; this.filteredTeams = []; return; }
+      try {
+        const r = await fetch(`/api/sports/${this.pickerLeague}/teams`);
+        this.allTeams = await r.json();
+        this.filterTeams();
+      } catch(e) { this.error = 'Could not load teams: ' + e.message; }
+    },
+
+    filterTeams() {
+      const q = this.teamSearch.toLowerCase().trim();
+      if (!q) { this.filteredTeams = []; return; }
+      this.filteredTeams = this.allTeams
+        .filter(t => t.name.toLowerCase().includes(q) || t.abbreviation.toLowerCase().includes(q))
+        .slice(0, 8);
+    },
+
+    async addFavorite(team) {
+      try {
+        const r = await fetch('/api/favorites', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            league: this.pickerLeague,
+            team_id: team.id,
+            team_name: team.name,
+            team_abbr: team.abbreviation,
+          }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const fav = await r.json();
+        this.favorites.push(fav);
+        this.teamSearch = '';
+        this.filteredTeams = [];
+      } catch(e) { this.error = 'Could not add favorite: ' + e.message; }
+    },
+
+    async removeFavorite(fav) {
+      try {
+        await fetch(`/api/favorites/${fav.league}/${fav.team_id}`, { method: 'DELETE' });
+        this.favorites = this.favorites.filter(f => f.id !== fav.id);
+      } catch(e) { this.error = 'Could not remove favorite: ' + e.message; }
+    },
+  };
+}
+
+function carousel() {
+  return {
+    widgets: [],
+    draggingId: null,
+    error: null,
+
+    async load() {
+      try {
+        const r = await fetch('/api/widgets');
+        this.widgets = await r.json();
+      } catch(e) { this.error = 'Load failed: ' + e.message; }
+    },
+
+    async patchWidget(widget, patch) {
+      try {
+        const r = await fetch(`/api/widgets/${widget.id}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(patch),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const updated = await r.json();
+        Object.assign(widget, updated);
+      } catch(e) { this.error = 'Could not update widget: ' + e.message; }
+    },
+
+    drop(targetId) {
+      if (!this.draggingId || this.draggingId === targetId) {
+        this.draggingId = null;
+        return;
+      }
+      const fromIdx = this.widgets.findIndex(w => w.id === this.draggingId);
+      const toIdx   = this.widgets.findIndex(w => w.id === targetId);
+      if (fromIdx === -1 || toIdx === -1) { this.draggingId = null; return; }
+      const [moved] = this.widgets.splice(fromIdx, 1);
+      this.widgets.splice(toIdx, 0, moved);
+      this.draggingId = null;
+      this.saveOrder();
+    },
+
+    async saveOrder() {
+      try {
+        await fetch('/api/widgets/reorder', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ ids: this.widgets.map(w => w.id) }),
+        });
+      } catch(e) { this.error = 'Reorder failed: ' + e.message; }
+    },
+  };
+}
+</script>
+</body>
+</html>
