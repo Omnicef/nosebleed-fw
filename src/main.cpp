@@ -39,6 +39,7 @@ static void heartbeat(const char* name) {
 #include "date_window.h"
 #include "espn.h"
 #include "espn_json.h"
+#include "font.h"
 #include "game.h"
 #include "local_time.h"
 #include "logos_esp.h"
@@ -202,6 +203,11 @@ static int render_dwell_s() {
     return 5;
 }
 
+// T-8.6: POST /api/system/show-ip arms an 8 s scrolling-IP splash on the
+// render task (the panel is render's property — the web side only flags it).
+static std::atomic<uint32_t> g_ip_deadline{0};
+static void web_show_ip() { g_ip_deadline.store(millis() + 8000); }
+
 static void task_render(void*) {
     nb::config::bind_render_task(xTaskGetCurrentTaskHandle());
     const int pw = nb::panel::width(), ph = nb::panel::height();
@@ -230,10 +236,40 @@ static void task_render(void*) {
             g_strip_key = 0;  // force rebuild on next poll pass
         }
         const uint32_t t_busy = millis();
-        const nb::render::Strip* s = g_holder.front();
+        // T-8.6 show-ip splash: 8 s scrolling IP, replacing the strip for the
+        // window (wrap-safe deadline math). Built once per trigger.
+        const uint32_t ipdl = g_ip_deadline.load(std::memory_order_relaxed);
+        if (ipdl != 0 && static_cast<int32_t>(ipdl - millis()) <= 0)
+            g_ip_deadline.store(0, std::memory_order_relaxed);
+        bool ip_shown = false;
+        if (ipdl != 0) {
+            static nb::Canvas16 ip_c;
+            static uint32_t ip_dl_built = 0;
+            static double ip_scroll = 0;
+            static uint32_t ip_t = 0;
+            if (ip_dl_built != ipdl) {
+                nb::canvas_free(ip_c);
+                const String ip = WiFi.localIP().toString();
+                const int tw = nb::text_width(nb::FONT_SPLEEN_6X12, static_cast<int>(ip.length()));
+                ip_c = nb::canvas_alloc(static_cast<uint16_t>(tw + pw), static_cast<uint16_t>(ph));
+                if (ip_c.valid())
+                    nb::draw_text_outlined(ip_c, nb::FONT_SPLEEN_6X12, pw,
+                                             (ph - nb::FONT_SPLEEN_6X12.box_h) / 2, ip.c_str(),
+                                             nb::rgb565(255, 196, 0), 0);
+                ip_dl_built = ipdl;
+                ip_scroll = 0;
+            }
+            ip_t = ip_t == 0 ? millis() : ip_t;
+            ip_scroll += 20.0 * (millis() - ip_t) / 1000.0;
+            ip_t = millis();
+            const int w0 = nb::render::scroll_window_x(ip_c.w, pw, static_cast<int32_t>(ip_scroll));
+            nb::panel::blit(ip_c, -w0, 0);  // invalid canvas blits black (bounds-checked)
+            ip_shown = true;
+        }
+        const nb::render::Strip* s = ip_shown ? nullptr : g_holder.front();
         const int64_t now = static_cast<int64_t>(time(nullptr));
         if (s == nullptr || !s->canvas.valid()) {
-            nb::panel::blit(black);
+            if (!ip_shown) nb::panel::blit(black);
         } else {
             const uint32_t g = g_holder.generation();
             if (g != seen_gen) {
@@ -405,6 +441,8 @@ void setup() {
   // thread is created here, and AsyncTCP's begin() asserts if it is absent.
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
+  nb::web::set_preview_source(&g_holder);  // T-8.6 /preview
+  nb::web::set_show_ip_hook(web_show_ip);
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.
