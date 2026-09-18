@@ -205,6 +205,10 @@ nosebleed-fw/
 - **Timing measured in a simulator is meaningless.** Wokwi caps the CPU near 8 MHz. Never evaluate the T-0.5 budget or
   the 30 fps target there. Heap figures are reasonably faithful; wall-clock figures are not.
 
+**A red X in the Actions list may mean SUPERSEDED, not failed.** `ci.yml` sets `cancel-in-progress`, so a push that
+lands while an earlier run is in flight cancels it and GitHub paints the cancellation red. Always read the job
+annotation before treating an X as a failure — "Canceling since a higher priority waiting request exists" is not a break.
+
 ## Running locally (no hardware)
 
 ```bash
