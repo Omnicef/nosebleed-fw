@@ -898,3 +898,31 @@ Checks:
 - `pio test -e native` → 37/37; purity OK; `esp32s3` SUCCESS.
 - Hardware: boot → WiFi → SNTP → poll ok → `[strip] rebuilt: 8 cards,
   w=576, pages=8` → sustained 30.3 fps; visual checks above.
+
+## Split test envs out of main.cpp
+
+`src/main.cpp` had grown to 2,039 lines carrying six `#ifdef NB_*_TEST` device
+test mains plus normal boot. They are now one file each under `src/envs/`,
+selected per build by PlatformIO `build_src_filter` — the `#ifdef` dispatch
+inside one translation unit is gone. Purely mechanical: each block is verbatim
+(diff-checked against the pre-split file); behaviour and the boot banner are
+unchanged.
+
+- `src/envs/common.h` — the pre-dispatch sequence every build shared (banner,
+  sdkconfig/partition snapshots, PSRAM canvas allocator, the one global `Config`)
+  plus `boot_prologue()` / `boot_load_config()`. Its `static` definitions land
+  once per binary because exactly one of `main.cpp` / the env files compiles.
+- `src/envs/{panel,logos,config,http,cache,card}_test.cpp` — each holds its old
+  block verbatim (guard kept, so a stray compile stays inert) and a `setup()`
+  that runs `boot_prologue()` then the test entry, matching the old dispatch
+  order exactly: logos/http/cache before config load, config runs its own
+  reset/load, panel/card load `g_cfg` first via `boot_load_config()`.
+- `platformio.ini`: `esp32s3`/`native` get `+<*> -<envs/>`; each test env
+  overrides with `-<*> +<envs/<x>_test.cpp>` so `main.cpp` and the five siblings
+  are excluded. (Lesson: a bare `-<envs/>` filters an empty include-set — the
+  default `+<*>` is not implied, and `main.cpp` silently stops being built.)
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS; all six test envs → SUCCESS.
+- `pio test -e native` → 37/37; `pio run -e native` (live preview) SUCCESS.
+- `bash tools/check_render_purity.sh` → OK.
