@@ -85,23 +85,18 @@ static int league_of_slug(const char* slug) {
     return -1;
 }
 
-static void boot_apply_favorites();
+static void boot_apply_favorites(const nb::config::Config& cfg);
 
-// Carousel order = widgets sorted by `order`. Producers are built once.
-static void boot_build_producers() {
-    uint8_t idx[nb::config::kMaxWidgets];
-    int n = 0;
-    for (int i = 0; i < g_cfg.widget_count && n < nb::config::kMaxWidgets; ++i) idx[n++] = i;
-    for (int a = 1; a < n; ++a)  // insertion sort; 16 elements
-        for (int b = a; b > 0 && g_cfg.widgets[idx[b]].order < g_cfg.widgets[idx[b - 1]].order; --b) {
-            const uint8_t t = idx[b];
-            idx[b] = idx[b - 1];
-            idx[b - 1] = t;
-        }
-    for (int j = 0; j < n; ++j) {
-        const int wi = idx[j];
-        const auto& w = g_cfg.widgets[wi];
-        g_wen[wi] = w.enabled != 0;
+// Producers are constructed once (one clock, one scoreboard per known
+// league) and ordered per pass by boot_order_producers(). T-8.5: the strip
+// order IS the carousel widget order — /api/widgets/reorder needs no
+// restart, only a strip-key change.
+static nb::render::CardProducer* g_prod[kLeagueSlugCount + 1];
+static int g_prod_n = 0;
+
+static void boot_create_producers() {
+    for (int i = 0; i < g_cfg.widget_count; ++i) {
+        const auto& w = g_cfg.widgets[i];
         if (std::strcmp(w.type, "clock") == 0 && g_clock == nullptr) {
             g_clock = new nb::render::ClockWidget(nb::render::system_local_time, nullptr,
                                                   g_cfg.hw.clock_24h != 0);
@@ -109,35 +104,60 @@ static void boot_build_producers() {
             const int lg = league_of_slug(w.league);
             if (lg >= 0 && g_sb[lg] == nullptr)
                 g_sb[lg] = new nb::render::ScoreboardWidget(g_cache, lg, kLeagueSlugs[lg],
-                                                            &g_wen[wi], kBootResolver,
+                                                            &g_wen[i], kBootResolver,
                                                             nb::render::system_local_time, nullptr);
         }
     }
-    boot_apply_favorites();
+}
+
+// Carousel order = widgets sorted by `order` (insertion sort, <=16 rows).
+// Also refreshes the stable enabled flags the producers point into.
+static void boot_order_producers(const nb::config::Config& cfg) {
+    uint8_t idx[nb::config::kMaxWidgets];
+    int n = 0;
+    for (int i = 0; i < cfg.widget_count && n < nb::config::kMaxWidgets; ++i) idx[n++] = i;
+    for (int a = 1; a < n; ++a)
+        for (int b = a; b > 0 && cfg.widgets[idx[b]].order < cfg.widgets[idx[b - 1]].order; --b) {
+            const uint8_t t = idx[b];
+            idx[b] = idx[b - 1];
+            idx[b - 1] = t;
+        }
+    for (int i = 0; i < nb::config::kMaxWidgets; ++i) g_wen[i] = false;
+    int out = 0;
+    for (int j = 0; j < n && out < kLeagueSlugCount + 1; ++j) {
+        const auto& w = cfg.widgets[idx[j]];
+        const int wi = idx[j];
+        g_wen[wi] = w.enabled != 0;
+        if (std::strcmp(w.type, "clock") == 0 && g_clock != nullptr) {
+            g_prod[out++] = g_clock;
+        } else if (std::strcmp(w.type, "scoreboard") == 0) {
+            const int lg = league_of_slug(w.league);
+            if (lg >= 0 && g_sb[lg] != nullptr) g_prod[out++] = g_sb[lg];
+        }
+    }
+    g_prod_n = out;
 }
 
 // Favourite team ids per league (T-7.5 preemption input). Pointers into the
-// static g_cfg arrays — stable.
-static void boot_apply_favorites() {
+// caller's config — the poll task's copy is stable for the whole pass.
+static void boot_apply_favorites(const nb::config::Config& cfg) {
     static const char* ids[nb::data::kMaxGamesPerLeague];
     for (int lg = 0; lg < kLeagueSlugCount; ++lg) {
         if (g_sb[lg] == nullptr) continue;
         int c = 0;
-        for (int f = 0; f < g_cfg.favorite_count && c < nb::data::kMaxGamesPerLeague; ++f)
-            if (league_of_slug(g_cfg.favorites[f].league) == lg) ids[c++] = g_cfg.favorites[f].team_id;
+        for (int f = 0; f < cfg.favorite_count && c < nb::data::kMaxGamesPerLeague; ++f)
+            if (league_of_slug(cfg.favorites[f].league) == lg) ids[c++] = cfg.favorites[f].team_id;
         g_sb[lg]->set_priority_team_ids(ids, c);
     }
 }
 
 static int boot_producers(nb::render::CardProducer* ps[kLeagueSlugCount + 1]) {
-    int n = 0;
-    if (g_clock) ps[n++] = g_clock;
-    for (int lg = 0; lg < kLeagueSlugCount; ++lg)
-        if (g_sb[lg]) ps[n++] = g_sb[lg];
-    return n;
+    for (int i = 0; i < g_prod_n; ++i) ps[i] = g_prod[i];
+    return g_prod_n;
 }
 
-static uint32_t boot_strip_key(nb::render::CardProducer* const* ps, int n, int64_t now) {
+static uint32_t boot_strip_key(nb::render::CardProducer* const* ps, int n, int64_t now,
+                               const nb::config::Config& cfg) {
     uint32_t h = 2166136261u;
     for (int i = 0; i < n; ++i) {
         if (!ps[i]->is_visible(now)) continue;
@@ -145,23 +165,23 @@ static uint32_t boot_strip_key(nb::render::CardProducer* const* ps, int n, int64
         for (int b = 0; b < 4; ++b) { h ^= (k >> (8 * b)) & 0xff; h *= 16777619u; }
         h ^= 0xa5;  // order matters; separator
     }
-    h = h * 31u + g_cfg.hw.card_gap + g_cfg.hw.display_mode * 256u +
-        g_cfg.hw.preemption_enabled * 512u;
-    for (int f = 0; f < g_cfg.favorite_count; ++f)  // T-8.4: favourites reorder the strip
-        for (const char* p = g_cfg.favorites[f].team_id; *p != '\0'; ++p) {
+    h = h * 31u + cfg.hw.card_gap + cfg.hw.display_mode * 256u +
+        cfg.hw.preemption_enabled * 512u;
+    for (int f = 0; f < cfg.favorite_count; ++f)  // T-8.4: favourites reorder the strip
+        for (const char* p = cfg.favorites[f].team_id; *p != '\0'; ++p) {
             h ^= static_cast<uint8_t>(*p);
             h *= 16777619u;
         }
     return h;
 }
 
-static void boot_rebuild_strip(int64_t now) {
+static void boot_rebuild_strip(int64_t now, const nb::config::Config& cfg) {
     nb::render::CardProducer* ps[kLeagueSlugCount + 1];
     const int n = boot_producers(ps);
     int order[kLeagueSlugCount + 1];
-    const int on = nb::render::order_producers(ps, n, now, g_cfg.hw.preemption_enabled != 0, order);
+    const int on = nb::render::order_producers(ps, n, now, cfg.hw.preemption_enabled != 0, order);
     nb::logos::set_phase(nb::logos::Phase::REBUILD);
-    const int placed = g_builder.build(*g_holder.back(), ps, order, on, g_cfg.hw.card_gap,
+    const int placed = g_builder.build(*g_holder.back(), ps, order, on, cfg.hw.card_gap,
                                         nb::panel::height(), now);
     nb::logos::set_phase(nb::logos::Phase::FRAME);
     if (placed > 0) g_holder.commit();  // 0 = nothing visible / OOM: keep last good
@@ -169,6 +189,17 @@ static void boot_rebuild_strip(int64_t now) {
     Serial.printf("[strip] rebuilt: %d cards%s, w=%d, pages=%d\n", placed,
                   g_builder.truncated() ? ", PRODUCERS TRUNCATED" : "",
                   f != nullptr ? f->canvas.w : 0, f != nullptr ? f->page_count : 0);
+}
+
+// T-8.5: static paging dwell comes from the first enabled widget that has
+// one. ponytail: Strip pages carry no per-card widget attribution, so
+// per-widget dwell is stored but page-agnostic; wire it per-page if the
+// strip ever records page->widget.
+static int render_dwell_s() {
+    for (int i = 0; i < g_cfg.widget_count; ++i)
+        if (g_cfg.widgets[i].enabled != 0 && g_cfg.widgets[i].dwell_s >= 1.0f)
+            return g_cfg.widgets[i].dwell_s > 120.0f ? 120 : static_cast<int>(g_cfg.widgets[i].dwell_s);
+    return 5;
 }
 
 static void task_render(void*) {
@@ -211,7 +242,7 @@ static void task_render(void*) {
             }
             int w0;
             if (g_cfg.hw.display_mode == nb::config::kDisplayStatic) {
-                w0 = nb::render::page_window_x(*s, pst, now, 5);
+                w0 = nb::render::page_window_x(*s, pst, now, render_dwell_s());
             } else {
                 const uint32_t ms = millis();
                 scroll += static_cast<double>(g_cfg.hw.scroll_speed) * (ms - last_ms) / 1000.0;
@@ -251,6 +282,12 @@ static void task_poll(void*) {
     while (time(nullptr) < 1700000000) vTaskDelay(pdMS_TO_TICKS(200));  // SNTP first (TLS)
     sch.reset(time(nullptr));
     for (;;) {
+        // T-8.5: the poll task owns its own config copy. The shared g_cfg is
+        // the RENDER task's (reloaded on save-notify); poll reloads once per
+        // pass here, so /api changes land on the next pass with no cross-task
+        // mutation of g_cfg.
+        static nb::config::Config pc;
+        nb::config::load(pc);
         const time_t now = time(nullptr);
         for (int lg = 0; lg < kLeagueSlugCount; ++lg) {
             if (!sch.due(lg, now)) continue;
@@ -285,13 +322,14 @@ static void task_poll(void*) {
                           static_cast<unsigned>(wire));
         }
         const int64_t now2 = time(nullptr);
-        boot_apply_favorites();  // T-8.4: /api/favorites applies on the next pass
+        boot_order_producers(pc);  // T-8.5: carousel order/enabled apply on this pass
+        boot_apply_favorites(pc);  // T-8.4: /api/favorites applies on this pass
         nb::render::CardProducer* ps[kLeagueSlugCount + 1];
         const int n = boot_producers(ps);
-        const uint32_t key = boot_strip_key(ps, n, now2);
+        const uint32_t key = boot_strip_key(ps, n, now2, pc);
         if (key != g_strip_key) {
             g_strip_key = key;
-            boot_rebuild_strip(now2);
+            boot_rebuild_strip(now2, pc);
         }
         int64_t sleep_s = sch.next_wake(now2) - now2;
         if (sleep_s < 1) sleep_s = 1;  // 1 s tick so per-minute clock keys rebuild promptly
@@ -355,7 +393,9 @@ void setup() {
     Serial.println("FATAL: no PSRAM for DataCache");
     for (;;) vTaskDelay(pdMS_TO_TICKS(10000));
   }
-  boot_build_producers();
+  boot_create_producers();
+  boot_order_producers(g_cfg);
+  boot_apply_favorites(g_cfg);
   nb::logos::set_phase(nb::logos::Phase::FRAME);  // lookups only during rebuilds (T-3.7)
   if (!g_builder.init_scratch(nb::render::kMaxStripCards,
                               static_cast<uint16_t>(nb::panel::height())))

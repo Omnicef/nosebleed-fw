@@ -1086,3 +1086,44 @@ Checks:
 - `pio run -e esp32s3` → SUCCESS; flashed; T-8.3 CI green.
 - `pio test -e native` → 37/37.
 - `bash tools/check_render_purity.sh` → OK.
+
+## T-8.5 — /api/widgets, reorder, producer order wiring (2026-09-18)
+
+- `GET /api/widgets` (carousel order: `{id,type,order,enabled,
+  dwell_seconds[,league]}`), `PUT /api/widgets/{id}` (`enabled` and/or
+  `dwell_seconds`, clamped 1–120, returns the updated widget — the SPA's
+  `Object.assign` contract), `POST /api/widgets/reorder {ids:[…]}`
+  (positional; unlisted ids keep relative order at the tail).
+- **Producer order is now the carousel order.** Phase 7 built the strip
+  clock-first-then-league-slug; `boot_create_producers` (construct once)
+  and `boot_order_producers` (widgets sorted by `order`, refreshes the
+  stable `g_wen[]` enabled flags) replace `boot_build_producers`, and
+  `task_poll` re-orders every pass — drag-reorder lands without restart.
+- **Root-cause fix — poll never saw config writes.** `g_cfg` is reloaded
+  by the *render* task on save-notify (T-4.3); poll read boot-time values
+  forever. Poll now owns its own copy (`config::load(pc)` once per pass)
+  and the order/favourites/strip-key/rebuild path takes `const Config&` —
+  no cross-task mutation of `g_cfg`.
+- Static-mode dwell: `render_dwell_s()` reads the first enabled widget's
+  `dwell_s` (was hardcoded 5). ponytail: pages carry no widget
+  attribution, so per-widget dwell is stored but page-global; comment in
+  main.cpp names the upgrade path.
+
+Hardware proof:
+
+```text
+GET /api/widgets              -> 10 seeded widgets in order
+PUT scoreboard_mlb enabled=false/true -> widget JSON back, 200
+PUT clock dwell_seconds=9            -> persists
+POST reorder (clock last)     -> next poll pass rebuilt the strip
+poll fetched MLB              -> [strip] rebuilt: 8 cards, w=576 (clock now last;
+                                   order visual check rides on T-8.6 /preview)
+```
+
+Found while testing: **opening the USB CDC serial port chip-resets the S3**
+(`rst:0x15 USB_UART_CHIP_RESET`) regardless of DTR state — a second pyserial
+open looked like a poll stall. Keep one long-lived serial session.
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS; flashed.
+- `pio test -e native` → 37/37; purity OK.

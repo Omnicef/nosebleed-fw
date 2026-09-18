@@ -298,6 +298,112 @@ void handle_favorite_delete(AsyncWebServerRequest* request) {
     send_json(request, 200, d);
 }
 
+// ─── T-8.5 — /api/widgets (carousel order, enable, dwell) ────────────────
+
+int widget_find(const config::Config& c, const String& id) {
+    for (int i = 0; i < c.widget_count; ++i)
+        if (id == c.widgets[i].id) return i;
+    return -1;
+}
+
+void widget_json(JsonObject o, const config::WidgetConfig& w) {
+    o["id"] = w.id;
+    o["type"] = w.type;
+    o["order"] = w.order;
+    o["enabled"] = w.enabled != 0;
+    o["dwell_seconds"] = w.dwell_s;
+    if (w.league[0] != '\0') o["league"] = w.league;
+}
+
+// Widgets in carousel order (by `order`, insertion sort over <=16 rows).
+int widget_order_list(const config::Config& c, uint8_t* idx) {
+    int n = 0;
+    for (int i = 0; i < c.widget_count && n < config::kMaxWidgets; ++i)
+        idx[n++] = static_cast<uint8_t>(i);
+    for (int a = 1; a < n; ++a)
+        for (int b = a; b > 0 && c.widgets[idx[b]].order < c.widgets[idx[b - 1]].order; --b) {
+            const uint8_t t = idx[b];
+            idx[b] = idx[b - 1];
+            idx[b - 1] = t;
+        }
+    return n;
+}
+
+void widgets_array(JsonDocument& d, const config::Config& c) {
+    uint8_t idx[config::kMaxWidgets];
+    const int n = widget_order_list(c, idx);
+    JsonArray a = d.to<JsonArray>();
+    for (int j = 0; j < n; ++j) widget_json(a.add<JsonObject>(), c.widgets[idx[j]]);
+}
+
+void handle_widgets_get(AsyncWebServerRequest* request) {
+    config::Config c;
+    config::load(c);
+    JsonDocument d;
+    widgets_array(d, c);
+    send_json(request, 200, d);
+}
+
+// PUT /api/widgets/{id} body {"enabled": bool} and/or {"dwell_seconds": n}.
+void handle_widget_put(AsyncWebServerRequest* request, JsonVariant& json) {
+    const String id = request->url().substring(strlen("/api/widgets/"));
+    if (!json.is<JsonObject>() ||
+        (!json["enabled"].is<bool>() && !json["dwell_seconds"].is<float>() &&
+         !json["dwell_seconds"].is<long>())) {
+        request->send(400, "application/json", "{\"error\":\"enabled or dwell_seconds required\"}");
+        return;
+    }
+    config::Config c;
+    config::load(c);
+    int j = widget_find(c, id);
+    if (j < 0) {
+        request->send(404, "application/json", "{\"error\":\"unknown widget\"}");
+        return;
+    }
+    if (json["enabled"].is<bool>()) c.widgets[j].enabled = json["enabled"].as<bool>() ? 1 : 0;
+    if (json["dwell_seconds"].is<float>() || json["dwell_seconds"].is<long>()) {
+        const long dw = lclamp(static_cast<long>(json["dwell_seconds"].as<float>()), 1, 120);
+        c.widgets[j].dwell_s = static_cast<float>(dw);
+    }
+    if (!config::save(c)) {
+        request->send(500, "application/json", "{\"error\":\"config save failed\"}");
+        return;
+    }
+    JsonDocument d;
+    widget_json(d.to<JsonObject>(), c.widgets[j]);
+    send_json(request, 200, d);
+}
+
+// POST /api/widgets/reorder body {"ids": ["clock", ...]} — drag-to-reorder.
+// Order is positional; ids not listed keep their relative order at the tail.
+void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
+    if (!json.is<JsonObject>() || !json["ids"].is<JsonArray>()) {
+        request->send(400, "application/json", "{\"error\":\"ids array required\"}");
+        return;
+    }
+    config::Config c;
+    config::load(c);
+    bool assigned[config::kMaxWidgets] = {};
+    uint16_t next = 0;
+    for (JsonVariantConst v : json["ids"].as<JsonArrayConst>()) {
+        if (!v.is<const char*>()) continue;
+        const int j = widget_find(c, String(v.as<const char*>()));
+        if (j >= 0 && !assigned[j]) {
+            c.widgets[j].order = next++;
+            assigned[j] = true;
+        }
+    }
+    for (int i = 0; i < c.widget_count; ++i)
+        if (!assigned[i]) c.widgets[i].order = next++;
+    if (!config::save(c)) {
+        request->send(500, "application/json", "{\"error\":\"config save failed\"}");
+        return;
+    }
+    JsonDocument d;
+    d["ok"] = true;
+    send_json(request, 200, d);
+}
+
 }  // namespace
 
 bool init() {
@@ -380,6 +486,25 @@ bool init() {
     }
     srv->on(AsyncURIMatcher::prefix("/api/favorites/"), AsyncWebRequestMethod::HTTP_DELETE,
             handle_favorite_delete);
+
+    // T-8.5 — widget carousel. /api/widgets/reorder (POST, exact) is a
+    // different method from PUT /api/widgets/{id} (prefix) — no shadowing.
+    srv->on(AsyncURIMatcher::exact("/api/widgets"), AsyncWebRequestMethod::HTTP_GET,
+            handle_widgets_get);
+    auto* widget_put = new (std::nothrow)
+        AsyncCallbackJsonWebHandler(AsyncURIMatcher::prefix("/api/widgets/"), handle_widget_put);
+    if (widget_put != nullptr) {
+        widget_put->setMethod(AsyncWebRequestMethod::HTTP_PUT);
+        widget_put->setMaxContentLength(256);
+        srv->addHandler(widget_put);
+    }
+    auto* widgets_reorder = new (std::nothrow) AsyncCallbackJsonWebHandler(
+        AsyncURIMatcher::exact("/api/widgets/reorder"), handle_widgets_reorder);
+    if (widgets_reorder != nullptr) {
+        widgets_reorder->setMethod(AsyncWebRequestMethod::HTTP_POST);
+        widgets_reorder->setMaxContentLength(1024);
+        srv->addHandler(widgets_reorder);
+    }
 
     const uint32_t f3 = internal_free();
     const uint32_t l3 = internal_largest();
