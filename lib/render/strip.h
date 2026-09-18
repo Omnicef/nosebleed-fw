@@ -56,9 +56,15 @@ class StripBuilder {
     int build(Strip& dst, CardProducer* const* producers, const int* order,
               int order_count, int gap, int panel_w, int64_t now_utc);
 
+    // True when the last build hit the scratch cap with at least one more
+    // visible producer left in `order` — cards were dropped. lib/render is
+    // purity-locked from logging; the caller surfaces it.
+    bool truncated() const { return truncated_; }
+
   private:
     Canvas16 scratch_[kMaxStripCards] = {};
     int cap_ = 0;
+    bool truncated_ = false;
 };
 
 }  // namespace render

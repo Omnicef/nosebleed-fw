@@ -1657,7 +1657,8 @@ static void boot_rebuild_strip(int64_t now) {
     nb::logos::set_phase(nb::logos::Phase::FRAME);
     if (placed > 0) g_holder.commit();  // 0 = nothing visible / OOM: keep last good
     const nb::render::Strip* f = g_holder.front();
-    Serial.printf("[strip] rebuilt: %d cards, w=%d, pages=%d\n", placed,
+    Serial.printf("[strip] rebuilt: %d cards%s, w=%d, pages=%d\n", placed,
+                  g_builder.truncated() ? ", PRODUCERS TRUNCATED" : "",
                   f != nullptr ? f->canvas.w : 0, f != nullptr ? f->page_count : 0);
 }
 
