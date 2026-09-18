@@ -926,3 +926,38 @@ Checks:
 - `pio run -e esp32s3` → SUCCESS; all six test envs → SUCCESS.
 - `pio test -e native` → 37/37; `pio run -e native` (live preview) SUCCESS.
 - `bash tools/check_render_purity.sh` → OK.
+
+## T-8.1 — async web server bring-up (2026-09-18)
+
+Pinned the ESP32Async v3 stack and brought the server up from `task_web`:
+
+- `AsyncTCP` `v3.5.0` and `ESPAsyncWebServer` `v3.12.1`, both LGPL-3.0 and
+  recorded in `docs/DEPENDENCY-LICENCES.md`.
+- `lib/web/web.cpp` creates one `AsyncWebServer` on port 80 and registers
+  `GET /ping` as the T-8.1 static-route proof.
+
+The first hardware attempt reboot-looped in `AsyncServer::begin()`:
+`xQueueSemaphoreTake((pxQueue))` asserted because `task_web` raced `task_net`
+and bound before LwIP's `tcpip` thread existed. The stack is now initialised
+once in `setup()`, before task creation, and `task_web` waits for a Wi-Fi
+lease before starting the server.
+
+Measured internal heap cost (hardware, after Wi-Fi connect):
+
+```text
+server=244 B route=160 B begin=17,504 B total=17,908 B
+free=112,404 B largest block=71,668 B
+```
+
+That is comfortably within the AGENTS internal-RAM budget. HTTP proof:
+
+```text
+GET /ping     -> 200, body "pong"
+GET /missing  -> 404
+```
+
+Checks:
+- `pio run -e esp32s3` → SUCCESS; RAM 15.8 %, Flash 28.6 %.
+- `pio test -e native` → 37/37; `pio run -e native` → SUCCESS.
+- `bash tools/check_render_purity.sh` → OK.
+- `pio run -t compiledb` → refreshed after adding `lib/web`.

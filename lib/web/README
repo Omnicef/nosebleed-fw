@@ -1,1 +1,1 @@
-Placeholder — populated in Phase 8 (T-8.1): ESPAsyncWebServer v3.x and /api/* handlers.
+ESPAsyncWebServer v3.x bring-up and /api/* handlers (Phase 8). T-8.1 starts on port 80 after Wi-Fi connects and serves `/ping` as the static-route proof.
