@@ -588,6 +588,11 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 
 **T-11.7 — College leagues.** Extend `logos.bin` to ~1,000 teams (~2.08 MB), still inside the partition.
 
+> ⚠️ **This is what makes the strip cap reachable — fix the truncation policy first.** Two silent caps exist (measured at the close of Phase 7): the parser drops games past `kMaxGamesPerLeague = 16` per league, and the strip builder stops at `kMaxStripCards = 48`. Neither logs. Worst realistic *pro* slate is ~41 cards, so this never bites today — a college-football Saturday blows straight through it.
+> **The failure is worse than losing a game.** `order_producers` floats live-favourite producers to the front, so the cut lands on the tail — and if the clock sits behind a full scoreboard in widget order, **the clock is what disappears**. That is the one card that must always survive; it is the fallback when there is nothing else to show.
+> Before enabling college: protect non-scoreboard producers from truncation (reserve their slots before scoreboards claim budget), and surface truncation rather than swallowing it. `lib/render/` is purity-locked from logging, so the signal has to come out through the caller or the `/api/system` payload.
+> Memory is not the constraint — 48 cards peaks at ~624 KB of 8 MB PSRAM, and allocation failure already degrades correctly (black panel or last-good strip, never a crash).
+
 ---
 
 ---
