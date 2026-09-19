@@ -1251,3 +1251,11 @@ Live proof after reflash:
 ```text
 magic b'BM'  bfSize 6966 == computed 6966 == actual 6966
 ```
+
+## FIX — SPA said "Marquee" (2026-09-18)
+
+Wrong project name in three places of assets/web/index.html: `<title>`,
+the header span (now `NOSEBLEED`), the restart banner. Not a redesign —
+just the rename the project carries. `grep -i marquee` on the source and
+the served page: zero. index.html 23,630 B → 5,705 B gz, web partition
+reflashed.
