@@ -88,7 +88,7 @@ jobs:
   # This catches the dominant failure mode for a local model on an unfamiliar
   # platform: a plausible but wrong esp_*/HUB75/ArduinoJson signature.
   firmware:
-    name: Build esp32s3 (ESP-IDF)
+    name: Build esp32s3
     runs-on: ubuntu-latest
     container:
       image: espressif/idf:v5.5.5
