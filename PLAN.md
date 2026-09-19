@@ -197,7 +197,7 @@ Nothing here is production code. The goal is one number: peak heap during a filt
 > The base `esp32-s3-devkitc-1` is an **N8 part with no PSRAM**, and pioarduino **ignores `board_build.flash_size`** (it reads `upload.flash_size`), so hand overrides silently yield an 8 MB, no-PSRAM build that appears to work until PSRAM allocation fails much later. Verified empirically at T-0.1 — the correct ID resolves to variant *ESP32-S3-DevKitC-1-N16R8V (16 MB Flash Quad, 8 MB PSRAM Octal)* with a 16 MB partition layout. Set `board_build.arduino.memory_type = qio_opi` as well.
 
 *Accept:* **the running firmware prints its own evidence** — flash 16777216 B, PSRAM 8388608 B, `psramFound()` true. A correct build config is not sufficient; the boot log is the acceptance criterion.
-*Note:* the platform may report flash mode **DIO** rather than QIO. Record it and move on — it is a flash read-bandwidth question only, not correctness. If mmap'd logo reads feel slow at T-3.4, revisit it there.
+*Note:* the platform reports flash mode **DIO** rather than QIO. **Explained at T-9.3: IDF maps a QIO build to a `dio` image header by design.** The flash was running QIO all along; the header field is not the runtime mode. Nothing to revisit at T-3.4.
 
 **T-0.2 — Panel hello world.** `ESP32-HUB75-MatrixPanel-DMA`, single 64×32, solid fills and a gradient.
 *Accept:* no ghosting, no tearing, stable colour. Record measured refresh at `lsbMsbTransitionBit` 0 and 1 (expect ≈57 Hz and ≈110 Hz). Confirm 74HCT245 adapter works; if colours are unstable, this is a wiring/level-shift problem, not software.

@@ -119,7 +119,7 @@ Firmware printed its own evidence (the acceptance criterion is the boot log, not
 | PSRAM size | 8,388,608 B (8 MB) |
 | PSRAM free at boot | 8,384,788 B |
 | `psramFound()` | yes |
-| Flash mode | **DIO** (not QIO) — record and move on; a read-bandwidth question only, revisit at T-3.4 if mmap'd logo reads feel slow |
+| Flash mode | **DIO** in the image header — **Explained at T-9.3: IDF maps a QIO build to a `dio` image header by design.** The flash was running QIO all along; the header field is not the runtime mode. Nothing to revisit at T-3.4. |
 
 ### T-0.3 — WiFi + SNTP — PASS
 
@@ -190,7 +190,7 @@ Rebuilt and verified: **the tuning does not bite.** Evidence:
 - **Wokwi firmware-size limit.** A raw 1.46 MB flash embed → a 2.25 MB image → Wokwi will not boot it. Workaround: store the fixture **zlib-compressed in flash** (88,349 B) and inflate into PSRAM with the S3 ROM `tinfl_decompress_mem_to_mem`. This changes the input source (memory, not TLS) — the reason the streaming half is untested.
 - **`NestingLimit(20)` is mandatory.** The MLB payload nests to depth **15**; ArduinoJson's default is 10 → the parse dies with `TooDeep` without it. Carried into T-5.4 and `docs/arduinojson-v7.md` §7.
 - **ESPN scores are JSON strings**, not integers.
-- **Flash mode is DIO, not QIO.** Not a correctness issue; revisit at T-3.4 if mmap'd logo reads are slow.
+- **Flash mode reads DIO, not QIO.** **Explained at T-9.3: IDF maps a QIO build to a `dio` image header by design.** The flash was running QIO all along; the header field is not the runtime mode. Nothing to revisit at T-3.4.
 - **Timing is meaningless in Wokwi** (CPU capped near 8 MHz). The T-0.5 < 6 s budget and the 30 fps target are hardware-only.
 
 ## Deferred to hardware (status after 2026-09-07)
