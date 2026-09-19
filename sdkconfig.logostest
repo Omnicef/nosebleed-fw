@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# logostest env layer: the old [env:logostest] used PlatformIO
+# build_type=debug so the Arduino core builds without NDEBUG and the
+# NB_LOGOS_TRAP_EXPECT assert path is live. Assertions stay enabled
+# (level 2) from the base config; only optimisation changes.
+CONFIG_COMPILER_OPTIMIZATION_DEBUG=y

@@ -143,7 +143,7 @@ static bool cardtest_load_fixture(const char* why) {
     const char* text = kCardTestFixture;
     const DeserializationError err = nb::data::parse_scoreboard(text, filter, doc);
     if (err) {
-        Serial.printf("cardtest fixture: parse FAIL (%s) — %s\n", static_cast<int>(bool(err)), why);
+        Serial.printf("cardtest fixture: parse FAIL (%s) — %s\n", err.c_str(), why);
         return false;
     }
     g_card_fixture->count = nb::data::to_games(doc, *g_card_fixture);

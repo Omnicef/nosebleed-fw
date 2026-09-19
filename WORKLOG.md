@@ -1259,3 +1259,91 @@ the header span (now `NOSEBLEED`), the restart banner. Not a redesign —
 just the rename the project carries. `grep -i marquee` on the source and
 the served page: zero. index.html 23,630 B → 5,705 B gz, web partition
 reflashed.
+
+## T-9.3 — Arduino-as-ESP-IDF-component (2026-09-18)
+
+Phase 9's structural prerequisite, no hardware. The firmware build of record is
+now **ESP-IDF 5.5.5 with arduino-esp32 3.3.11 as a managed component**
+(`main/idf_component.yml`); PlatformIO survives only as `env:native`.
+
+**Toolchain.** ESP-IDF v5.5.5 installed at `~/esp/esp-idf-v5.5.5` — the exact
+version the current Arduino prebuilts were built with
+(`CONFIG_IDF_INIT_VERSION="5.5.5"` in the shipped sdkconfig), so kconfig
+semantics match the proven build 1:1.
+
+**What the conversion is** (build system only — no lib/ or src/ rewrites):
+`CMakeLists.txt` (project + `pack_web` → `spiffs_web_bin` ordering + USB-CDC
+global defines), `main/CMakeLists.txt` (registers `src/` + all `lib/` sources;
+`NB_TARGET=` cache var picks one of the seven mains, replacing the six pio
+test envs — `tools/idf_build.sh <env>` wraps build-dir/sdkconfig layering),
+`sdkconfig.defaults` **regenerated from the Arduino core's own IDF-5.5.5
+sdkconfig** so the IDF build starts from the exact configuration the pio build
+ran, plus the qio_opi board overlay + the T-9.3 deltas. `AUTOSTART_ARDUINO=y`:
+the component supplies `app_main` and links `-u _Z5setupv -u _Z4loopv` — the
+Arduino entry-point pattern, `src/main.cpp` untouched.
+Deps pinned to the same artifacts pio used: core 3.3.11 (same release tag),
+ArduinoJson 7.4.3 (registry), ESPAsyncWebServer v3.12.1 / AsyncTCP v3.5.0
+(git-pinned — the component registry lags the GitHub tags), HUB75 at
+`cf09801` (git-pinned). `dependencies.lock` committed for the full graph.
+StreamUtils 1.9.2 is header-only and its upstream `CMakeLists.txt` is a
+host-test harness, so it is **vendored** into
+`components/nb_streamutils` (md5-verified against the `v1.9.2` tag, MIT licence
+carried). Retired: the pio esp32s3 + six test envs, the `pack_web.py`
+extra_script (now an IDF custom target), `.pio` paths in `wokwi.toml` (now
+`build/nosebleed-fw.*`).
+
+**Builds (all from clean build dirs).** firmware + all six device-test targets
+(logostest via `sdkconfig.logostest` for the debug layer) — **7/7 green**.
+`pio test -e native` 38/38. Purity script green.
+
+**Accept 1 — lib/render.** No framework include was added anywhere; the T-1.6
+guard has no hole — the conversion itself demanded **zero** changes. One
+one-line edit rides along, unrelated to the guard: `situation.h` count buffer
+8→14 bytes because IDF's `-Werror=all` (it comes from the Arduino component's
+own compile flags) turns gcc's `format-truncation` fatal on the theoretical
+int16 full range. Values never change; goldens byte-identical.
+
+**Accept 2 — mbedTLS (T-0.6).** They bite now, provably: `libmbedtls.a` is a
+fresh **from-source** artifact (`build/esp-idf/mbedtls/mbedtls/library/`),
+`sdkconfig.h` carries `MBEDTLS_SSL_IN_CONTENT_LEN=16384`,
+`MBEDTLS_SSL_OUT_CONTENT_LEN=2048`, asymmetric=y, and `KEEP_PEER_CERTIFICATE`
+absent. Static size A/B against a baseline build (same tree, Arduino's
+symmetric/keep-cert settings): ±150 B — as expected, the ~14 KB recovery is
+**runtime heap per handshake**, not flash. The 53 KB → ~39 KB re-measure
+needs the board (or a WOKWI token for the heap-only half); boot log
+(`sdkconfig_snapshot`) will show the effective values.
+
+**Accept 3 — data cache (T-1.3).** `CONFIG_ESP32S3_DATA_CACHE_64KB=y` and
+`LINE_64B=y` resolve to `ESP32S3_DATA_CACHE_SIZE=0x10000` — reachable from
+source, logged at boot for runtime confirmation.
+
+**Surprises.**
+- HUB75's `Kconfig.projbuild` defaults `ESP32_HUB75_USE_GFX=y`, which steers
+  its CMakeLists at component names (`arduino`, `Adafruit-GFX-Library`) that
+  don't exist in component mode — FATAL_ERROR until pinned `=n`, which puts it
+  on its esp_lcd/driver IDF path and exports `NO_GFX` itself. The pio build's
+  `-DNO_GFX` flag is now redundant (verified via compile_commands: NO_GFX on
+  both the driver sources and panel.cpp; driver .cpp builds in pure-IDF mode,
+  and its headers have zero Arduino-conditional layout — no ODR seam).
+- ESPAsyncWebServer v3.12.1 still ships the legacy `register_component()`
+  CMakeLists and IDF 5.5.5 builds it fine.
+- IDF 5.5's `ESPTOOLPY_FLASHMODE_QIO` deliberately maps the image header string
+  to `"dio"` (bootloader limitation, comment in `esptool_py/Kconfig.projbuild`)
+  — the T-0.1 "reports DIO" note stands in IDF too.
+- The core puts `-Werror=all` on every component, which surfaced four genuine
+  latent issues outside lib/render: `config.cpp` snprintf writing `w.id` from
+  `w.league` in one call (gcc's restrict analysis — routed through a local),
+  a `%s` fed an `int` in card_test's parse-fail print (was swallowing the real
+  reason — now `err.c_str()`), and `%u` vs `uint32_t` in two test envs (xtensa
+  `uint32_t` is `unsigned long`; Serial.printf never warned because pio didn't
+  use `-Werror=format`). `maybe-uninitialized` from StreamUtils inlining stays
+  a warning, not an error — project-wide `-Wno-error=maybe-uninitialized`, the
+  only warning demotion.
+- ESPAsyncWebServer's transitive deps forced namespace-exact git pins
+  (`esp32async/*`); an unnamespaced alias downloads as a second parallel
+  component and the manager refuses the ambiguity.
+
+**Deferred to hardware (unchanged scope).** Runtime TLS-session heap
+re-measure, data-cache runtime log, 53 KB → ~39 KB confirmation, and the two
+open items (static-mode flicker capture, T-9.1/T-9.2 provisioning). Wokwi
+heap-half of the TLS re-measure needs `WOKWI_CLI_TOKEN` — not set this session.

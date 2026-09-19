@@ -163,9 +163,9 @@ static void poll_task(void*) {
 
     const bool cycle_ok = g_cycle_ms > 0;
     const bool pass = cycle_ok && g_sess_max <= 1 && g_fps_min10 >= 280;
-    Serial.printf("  poll-demo: cycle=%d(%lu ms) sess_max=%d fps_min=%.1f heap_min=%u B fails=%d\n",
+    Serial.printf("  poll-demo: cycle=%d(%lu ms) sess_max=%d fps_min=%.1f heap_min=%lu B fails=%d\n",
                   cycle_ok, static_cast<unsigned long>(g_cycle_ms), g_sess_max.load(),
-                  g_fps_min10.load() / 10.0f, heap_min, g_poll_fails);
+                  g_fps_min10.load() / 10.0f, static_cast<unsigned long>(heap_min), g_poll_fails);
     Serial.printf("  POLL RESULT: %s\n", pass ? "PASS" : "FAIL");
     vTaskDelete(nullptr);
 }

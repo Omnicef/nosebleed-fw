@@ -20,7 +20,7 @@ using nb::data::kMaxGamesPerLeague;
 static void fill_generation(GameList* l, uint32_t gen) {
     l->count = 1 + static_cast<int>(gen % kMaxGamesPerLeague);
     char id[16];
-    std::snprintf(id, sizeof id, "%u", gen);
+    std::snprintf(id, sizeof id, "%lu", static_cast<unsigned long>(gen));
     for (int i = 0; i < l->count; i++) {
         Game& g = l->games[i];
         nb::data::copy_str(g.id, sizeof g.id, id);
@@ -38,7 +38,7 @@ static int check_generation(const GameList& l) {
     if (l.count < 1 || l.count > kMaxGamesPerLeague) return -1;
     const uint32_t gen = static_cast<uint32_t>(l.games[0].start_utc);
     char id[16];
-    std::snprintf(id, sizeof id, "%u", gen);
+    std::snprintf(id, sizeof id, "%lu", static_cast<unsigned long>(gen));
     if (l.count != 1 + static_cast<int>(gen % kMaxGamesPerLeague)) return static_cast<int>(gen);
     for (int i = 0; i < l.count; i++) {
         const Game& g = l.games[i];

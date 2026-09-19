@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Managed components, pinned to the exact versions the PlatformIO build used
+# (see git history of platformio.ini lib_deps). ESPAsyncWebServer/AsyncTCP are
+# git-pinned because the ESP Component Registry lags the GitHub tags.
+dependencies:
+  idf:
+    version: ">=5.5,<5.6"
+
+  espressif/arduino-esp32:
+    version: "3.3.11"   # same core tag as framework-arduinoespressif32 3.3.11
+
+  bblanchon/arduinojson:
+    version: "==7.4.3"
+
+  # Namespaced keys are the canonical component names, so these pins also
+  # satisfy ESPAsyncWebServer's own transitive dependency on
+  # esp32async/asynctcp (an alias key would be downloaded as a second,
+  # parallel component and the manager refuses the ambiguity).
+  esp32async/espasyncwebserver:
+    git: https://github.com/ESP32Async/ESPAsyncWebServer.git
+    version: "v3.12.1"
+
+  esp32async/asynctcp:
+    git: https://github.com/ESP32Async/AsyncTCP.git
+    version: "v3.5.0"
+
+  esp32_hub75_matrixpanel_dma:
+    git: https://github.com/mrcodetastic/ESP32-HUB75-MatrixPanel-DMA.git
+    version: "cf09801a362c71fc61da99751972b6dfb6e63b63"   # master at pinning time (T-3.x)

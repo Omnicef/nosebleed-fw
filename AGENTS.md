@@ -30,7 +30,7 @@ Build it by following the phased plan in `PLAN.md` — **do not jump ahead**; ea
 
 ## Tech stack (decided — see PLAN.md §1)
 
-- **Framework:** Arduino-ESP32 via **pioarduino** (`pioarduino/platform-espressif32`), converting to **Arduino-as-ESP-IDF-component** when Phase 9 needs `esp_ota`. Upstream PlatformIO `espressif32` is stale — do not use it.
+- **Framework:** **Arduino-as-ESP-IDF-component** since T-9.3 — ESP-IDF 5.5.5 project, Arduino core 3.3.11 as a managed component (`main/idf_component.yml`). The pioarduino/PlatformIO firmware build is retired; PlatformIO remains only for `env:native`.
 - **Panel driver:** `ESP32-HUB75-MatrixPanel-DMA` (mrcodetastic). Adafruit_GFX-compatible, DMA off the S3 LCD peripheral.
 - **JSON:** **ArduinoJson v7** with `DeserializationOption::Filter`. This is non-negotiable — see the hard rules.
 - **HTTP client:** `esp_http_client` / `HTTPClient` with `esp_crt_bundle`.
@@ -96,7 +96,11 @@ the 50–80 KB expectation. SNTP is ~504 B in steady state — effectively free 
 
 DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **16 KB per buffer**.
 
-> **TLS is 53 KB and cannot be tuned on this stack.** T-0.6 proved the mbedTLS options (`ASYMMETRIC_CONTENT_LEN`, `SSL_OUT_CONTENT_LEN`, drop-keep-peer-cert) are **inert under Arduino-ESP32**: the core links a *prebuilt* `libmbedtls` compiled untuned, pioarduino offers no from-source path, and its prebuild hook overwrites `sdkconfig`. The ~14 KB recovery is real but only lands after the **T-9.3 IDF conversion**. Budget 53 KB until then. It still fits comfortably — do not treat this as a reason to convert early.
+> **TLS tuning is live at build level since T-9.3.** T-0.6 proved the mbedTLS options inert under the Arduino
+> core (prebuilt `libmbedtls`, no from-source path). The IDF build compiles mbedTLS from source and
+> `sdkconfig.defaults` now actually lands: `ASYMMETRIC_CONTENT_LEN`, `SSL_IN=16384 / SSL_OUT=2048`,
+> drop-keep-peer-cert, and the 64 KB data cache (also unreachable at T-1.3). The ~14 KB per-session recovery
+> is a runtime-heap effect — re-measure the ~53 KB session figure on hardware against the T-0.4 numbers.
 
 > **Superseded projection.** This file previously claimed "~320 KB usable after WiFi" *and* listed WiFi as a 50–80 KB
 > consumer — internally inconsistent, since a post-WiFi figure already has WiFi deducted. Measurement settled it:
@@ -126,14 +130,19 @@ nosebleed-fw/
 ├── CLAUDE.md                 # one-line stub: @AGENTS.md
 ├── PLAN.md
 ├── LICENSE                   # GPL-3.0-only
-├── platformio.ini            # env:esp32s3, env:native
+├── CMakeLists.txt            # ESP-IDF project (T-9.3) + pack_web + spiffs image
+├── main/                     # IDF main component + idf_component.yml (version pins)
+├── platformio.ini            # env:native ONLY (host render/parser tests)
 ├── partitions.csv            # two app slots + logos + web
-├── sdkconfig.defaults        # mbedTLS tuning
+├── sdkconfig.defaults        # Arduino-base config + qio_opi overlay + T-9.3 deltas
+├── sdkconfig.logostest       # debug-build layer for the logostest env
 ├── opencode.json             # lsp + instructions for opencode
 ├── wokwi.toml                # simulator config — logic only, see PLAN.md §4
 ├── diagram.json              # S3 board as N16R8: 16 MB flash, 8 MB octal PSRAM
+├── components/               # local IDF components (nb_streamutils — vendored headers)
 ├── tools/                    # HOST-side build tooling
-│   ├── check_render_purity.sh  # T-1.6 guard, run by CI and pre-action
+│   ├── idf_build.sh          # env → build-dir wrapper (replaces the pio envs)
+│   ├── check_render_purity.sh  # T-1.6 guard, run by CI
 │   ├── build_logos.py        # Pillow pipeline → logos.bin
 │   ├── build_fonts.py        # BDF → C glyph tables
 │   ├── build_tzmap.py        # IANA → POSIX TZ table
@@ -151,7 +160,7 @@ nosebleed-fw/
 │   ├── logos/                # mmap reader
 │   ├── net/                  # wifi, sntp, provisioning, ota
 │   └── web/                  # server + api handlers
-├── src/main.cpp              # app_main, task creation
+├── src/main.cpp              # setup()/loop(), task creation (app_main is the component's, via AUTOSTART_ARDUINO)
 └── test/
     ├── test_native/          # host render + parser tests
     └── test_embedded/        # on-device smoke tests
@@ -212,12 +221,14 @@ annotation before treating an X as a failure — "Canceling since a higher prior
 ## Running locally (no hardware)
 
 ```bash
-pio test -e native            # render + parser tests, PNG output to test/out/
-pio run -e native -t exec     # live scrolling preview (T-2.10)
-wokwi-cli .                   # logic-only simulation; see the limits above
-pio run -e esp32s3 -t upload  # flash the device
-pio device monitor
-pio run -t compiledb          # refresh compile_commands.json for clangd
+pio test -e native                        # render + parser tests, PNGs to test/out/
+pio run -e native -t exec                 # live scrolling preview (T-2.10)
+wokwi-cli .                               # logic-only simulation; see the limits above
+. ~/esp/esp-idf-v5.5.5/export.sh                # IDF 5.5.5 toolchain, once per shell
+tools/idf_build.sh firmware build         # the shipping image (build/nosebleed-fw.bin)
+tools/idf_build.sh cardtest build         # a device-test env (dir: build-cardtest/)
+tools/idf_build.sh firmware flash monitor # flash the device
+cp build/compile_commands.json .          # refresh compile_commands.json for clangd
 ```
 
 ## Reference: what changed from the Pi
