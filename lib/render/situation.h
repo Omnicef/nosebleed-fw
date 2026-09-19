@@ -85,7 +85,7 @@ inline void draw_inning(Canvas16& c, int x, int y, int16_t inning, int inning_to
 
 inline void draw_count(Canvas16& c, int x_right, int y, const data::Situation& sit) {
     if (sit.balls == data::kNoInt || sit.strikes == data::kNoInt) return;
-    char buf[8];
+    char buf[14];  // "%d-%d" of int16: 6 + 1 + 6 + NUL; gcc's format-truncation sees the range
     std::snprintf(buf, sizeof buf, "%d-%d", static_cast<int>(sit.balls), static_cast<int>(sit.strikes));
     const int cw = text_width(FONT_SPLEEN_5X8, static_cast<int>(std::strlen(buf)));
     draw_text(c, FONT_SPLEEN_5X8, x_right - cw, y, buf, SIT_COLOR_COUNT);

@@ -388,7 +388,8 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
     config::load(c);
     bool assigned[config::kMaxWidgets] = {};
     uint16_t next = 0;
-    for (JsonVariantConst v : json["ids"].as<JsonArrayConst>()) {
+    const JsonArrayConst ids = json["ids"].as<JsonArrayConst>();  // bound, not inline — gcc13 -Wdangling-reference
+    for (JsonVariantConst v : ids) {
         if (!v.is<const char*>()) continue;
         const int j = widget_find(c, String(v.as<const char*>()));
         if (j >= 0 && !assigned[j]) {

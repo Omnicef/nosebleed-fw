@@ -82,68 +82,44 @@ jobs:
           retention-days: 14
 
   # -------------------------------------------------------------- firmware --
-  # Does it compile for the real target? This alone catches the dominant
-  # failure mode for a local model on an unfamiliar platform: a plausible but
-  # wrong esp_*/HUB75/ArduinoJson signature.
+  # Does it compile for the real target? T-9.3 moved this from PlatformIO to
+  # ESP-IDF 5.5.5 (Arduino 3.3.11 as a managed component); the whole toolchain
+  # ships in the espressif/idf image, so there is no install step.
+  # This catches the dominant failure mode for a local model on an unfamiliar
+  # platform: a plausible but wrong esp_*/HUB75/ArduinoJson signature.
   firmware:
-    name: Build esp32s3
+    name: Build esp32s3 (ESP-IDF)
     runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.5.5
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Cache PlatformIO
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.platformio
-            ~/.cache/pip
-          key: pio-esp32s3-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-          restore-keys: pio-esp32s3-${{ runner.os }}-
-
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
 
       - name: Build
         id: build
         run: |
-          if [ ! -f platformio.ini ]; then
-            echo "::notice::platformio.ini not present yet — skipping (pre-T-1.1)"
-            echo "built=false" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ ! -f CMakeLists.txt ]; then
+            echo "::error::CMakeLists.txt missing — IDF project vanished"
+            exit 1
           fi
-          pio run -e esp32s3 2>&1 | tee build.log
-          echo "built=true" >> "$GITHUB_OUTPUT"
+          tools/idf_build.sh firmware build 2>&1 | tee build.log
 
-      # Static footprint only. PlatformIO's RAM figure is .data + .bss — it does
-      # NOT include runtime heap, so it cannot verify the AGENTS.md budget on its
-      # own. What it does catch is steady erosion of internal DRAM, 3 KB at a
-      # time, which is exactly how a documented budget quietly stops holding.
-      # Runtime peak stays the job of on-device logging and the T-11.2 soak.
+      # Static footprint via idf.py size. The DRAM/STATIC columns are the
+      # internal-SRAM consumers the AGENTS.md budget tracks; runtime peak
+      # stays the job of on-device logging and the T-11.2 soak.
       - name: Memory report
-        if: steps.build.outputs.built == 'true'
+        if: steps.build.outcome == 'success'
         run: |
-          echo "### Static footprint" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          grep -E '^(RAM|Flash):' build.log >> "$GITHUB_STEP_SUMMARY" || true
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "_Static only — excludes runtime heap. See AGENTS.md budget._" >> "$GITHUB_STEP_SUMMARY"
-
-          # TODO(T-0.7): set a real ceiling once the spike measures one, then
-          # flip this from a warning to a hard failure.
-          #
-          # LIMIT_BYTES=180000
-          # USED=$(grep -oP '^RAM:.*?used \K[0-9]+' build.log || echo 0)
-          # if [ "$USED" -gt "$LIMIT_BYTES" ]; then
-          #   echo "::error::static RAM ${USED}B exceeds ${LIMIT_BYTES}B"
-          #   exit 1
-          # fi
+          {
+            echo "### Static footprint (idf.py size)"
+            echo '```'
+            tools/idf_build.sh firmware size
+            echo '```'
+            echo "_Static only — excludes runtime heap. See AGENTS.md budget._"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload build log
-        if: always() && steps.build.outputs.built == 'true'
+        if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: build-log

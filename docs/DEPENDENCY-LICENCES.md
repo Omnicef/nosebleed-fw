@@ -11,14 +11,14 @@ pulls them in.
 
 | Dependency | Version | Licence | GPLv3-compatible | Confirmed |
 |---|---|---|---|---|
-| `ESP32-HUB75-MatrixPanel-DMA` (mrcodetastic) | 3.0.15 | MIT | ✅ | `library.properties`; added Phase 2 (T-2.8) |
+| `ESP32-HUB75-MatrixPanel-DMA` (mrcodetastic) | cf09801 (3.0.15 line) | MIT | ✅ | `library.properties`; added Phase 2 (T-2.8); since T-9.3 a git-pinned IDF component (`main/idf_component.yml`), built in its esp_lcd/NO_GFX IDF mode |
 | `ArduinoJson` | 7.4.3 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5 |
-| `StreamUtils` (bblanchon) | 1.9.2 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5, pinned by git commit (registry cannot resolve this name/version) |
-| `ESPAsyncWebServer` (ESP32Async fork) | 3.12.1 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; added Phase 8 (T-8.1), pinned to `v3.12.1` |
-| `AsyncTCP` (ESP32Async fork) | 3.5.0 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; transitive dep of ESPAsyncWebServer, pinned to `v3.5.0` |
+| `StreamUtils` (bblanchon) | 1.9.2 | MIT | ✅ | `library.properties` (spike libdeps); added Phase 5. Since T-9.3 **vendored** header-only into `components/nb_streamutils` (upstream has no IDF component file); `LICENSE` copied in, tree verified against the `v1.9.2` tag. |
+| `ESPAsyncWebServer` (ESP32Async fork) | 3.12.1 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; added Phase 8 (T-8.1), pinned to `v3.12.1` — since T-9.3 a git-pinned IDF component (registry lags the tags). |
+| `AsyncTCP` (ESP32Async fork) | 3.5.0 | **LGPL-3.0** | ✅ | `library.properties` `license=LGPL-3.0`; transitive dep of ESPAsyncWebServer, pinned to `v3.5.0`; same git-pin route since T-9.3. |
 | `Adafruit_GFX` | **not linked** | BSD | ✅ | We build the panel lib with `-DNO_GFX` (T-0.2); GFX never linked. Row kept only because the driver is GFX-*compatible*, not because we depend on it. |
 | Arduino-ESP32 core | 3.3.11 | **LGPL-2.1-or-later** | ✅ | **Resolved** — `package.json` `license` field **and** `Arduino.h` header both say *"version 2.1 … or (at your option) any later version"* → upgrades cleanly to GPL-3.0. Was the one open question. |
-| ESP-IDF (via Arduino core) | 5.x | Apache-2.0 | ✅ (v3 only) | Core `esp32-hal` headers carry `SPDX-License-Identifier: Apache-2.0`; reconfirmed at the T-9.3 IDF conversion |
+| ESP-IDF | 5.5.5 (build system since T-9.3, was via Arduino core prebuilts) | Apache-2.0 | ✅ (v3 only) | Core `esp32-hal` headers carry `SPDX-License-Identifier: Apache-2.0`; T-9.3 walks the resolved component set in `dependencies.lock` — all Apache-2.0/MIT/BSD, no GPLv2-only or copyleft surprises |
 
 ## Bundled assets
 

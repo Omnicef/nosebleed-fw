@@ -87,7 +87,12 @@ void set_defaults(Config& c) {
     for (int i = 0; i < kLeagueSlugCount; ++i) {
         WidgetConfig& w = c.widgets[2 + i];
         scoreboard_order(i, w.league);  // _SCOREBOARD_LEAGUES order
-        std::snprintf(w.id, sizeof(w.id), "scoreboard_%s", w.league);
+        // Local buffer, then copy: writing w.id from w.league in one snprintf
+        // trips gcc's -Wrestrict (both live in the same aggregate `c`); the
+        // members never actually overlap, but the aliasing analysis can't see it.
+        char wid[kWidgetIdLen];
+        std::snprintf(wid, sizeof(wid), "scoreboard_%s", w.league);
+        copy_str(w.id, sizeof(w.id), wid);
         copy_str(w.type, kScoreboardTypeLen, "scoreboard");
         w.order = static_cast<uint16_t>(2 + i);
         w.enabled = (i == 0) ? 1 : 0;  // only mlb

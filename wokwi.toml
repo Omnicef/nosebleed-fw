@@ -4,5 +4,5 @@
 
 [wokwi]
 version = 1
-firmware = '.pio/build/esp32s3/firmware.bin'
-elf = '.pio/build/esp32s3/firmware.elf'
+firmware = 'build/nosebleed-fw.bin'
+elf = 'build/nosebleed-fw.elf'
