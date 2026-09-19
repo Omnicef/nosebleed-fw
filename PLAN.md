@@ -624,6 +624,53 @@ acceptance criterion, and it cannot be judged from a 4× PNG.
 **T-12.5 — Commit.** `Phase 12: card redesign`
 
 
+## §4a Open defects
+
+Found on the live device after Phase 8. Neither is fixed. Both need the board.
+
+### D-1 — Live clock is frozen on NHL/NBA/soccer cards
+
+`game_card.h:440` draws `game.clock`, but `ScoreboardWidget::cards_key`
+(`scoreboard_widget.h:49-89`) **never hashes it**. `status_display` is hashed, but only inside
+`if (g.has_situation)` — which is MLB/NFL only. So a period/clock card renders a game clock that freezes at
+strip-build time and only moves when something else changes the key.
+
+**A wrong clock is worse than no clock.** This is the more serious of the two defects.
+
+Not a one-line fix. Hashing `clock` naively rebuilds the strip on every poll for every live game in those
+leagues — which is presumably what the `has_situation` guard avoids for MLB/NFL. The decision is rebuild cost
+versus freshness, and it wants measuring before choosing: either accept per-poll rebuilds for leagues with a
+running clock, or re-render that card in place without a full strip rebuild.
+
+### D-2 — Static paging mode flickers every 5–8 s
+
+Visible on hardware in `display_mode = static`; scroll mode is clean. **Diagnosis incomplete — needs a serial
+capture of `[strip] rebuilt:` lines while the flicker is visible.**
+
+Confirmed by code review:
+
+- `status_display` in `cards_key` makes MLB/NFL keys tick on the live clock text, and `poll.h` staggers leagues
+  ~5 s apart, so a 5–8 s rebuild cadence is plausible.
+- Static mode carries `PageState.page` across generations; scroll mode re-anchors via `scroll_rewrap`
+  (`main.cpp:274-277`). The asymmetry is real.
+
+**Refuted — do not re-derive this.** An earlier diagnosis claimed card widths shift on rebuild so a stable page
+index lands on a different x. Impossible here: `strip.cpp:107` sets `widths[i] = block` for every card, so
+`page_x[i] = i*(CARD_W+gap)` regardless of content. A content-only rebuild produces a byte-identical `page_x`.
+
+Two mechanisms remain, and the log discriminates them:
+
+1. **Card count shrinks** → `st.page >= page_count` → `scroll.cpp:15-16` clamps to 0 → jump to the first card.
+   Fixable in ~6 lines: on a generation change pick the page whose `page_x` is nearest the displayed x, and
+   leave `next_change_utc` alone. Degenerates to a no-op when the page list is stable.
+2. **Preemption reorder or a changed game set** → page N holds a different card at the same x. No x-anchoring
+   fixes this; it needs card-identity anchoring, a much larger change.
+
+If `w=` and `pages=` are constant in the log and it still flickers, both mechanisms are wrong and the fault is
+elsewhere.
+
+---
+
 ## §5 Risk register
 
 | Risk | Phase | Severity | Mitigation |
