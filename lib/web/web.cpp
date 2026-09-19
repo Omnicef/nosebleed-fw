@@ -20,6 +20,7 @@
 #include "../config/store.h"
 #include "../data/espn.h"
 #include "../render/scroll.h"
+#include "bmp.h"
 
 #ifndef NB_FW_VERSION
 #define NB_FW_VERSION "dev"
@@ -411,17 +412,6 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
 const render::StripHolder* g_strip = nullptr;
 void (*g_show_ip_hook)() = nullptr;
 
-void put16(uint8_t* p, uint16_t v) {
-    p[0] = v & 0xFF;
-    p[1] = v >> 8;
-}
-void put32(uint8_t* p, uint32_t v) {
-    p[0] = v & 0xFF;
-    p[1] = (v >> 8) & 0xFF;
-    p[2] = (v >> 16) & 0xFF;
-    p[3] = v >> 24;
-}
-
 // Response-owned PSRAM buffer: the chunked filler's std::function keeps the
 // shared_ptr alive exactly as long as the socket flush needs it — no static
 // buffer to race, no leak. (send(uint8_t*,len) would alias: v3's
@@ -443,7 +433,7 @@ void handle_preview_get(AsyncWebServerRequest* request) {
         return;
     }
     const int w = s->canvas.w, h = s->canvas.h;
-    const uint32_t row = (static_cast<uint32_t>(w) * 3 + 3) & ~3U;
+    const uint32_t row = bmp_row(static_cast<uint32_t>(w));
     const uint32_t img = row * static_cast<uint32_t>(h);
     auto bmp = std::make_shared<BmpBuf>();
     bmp->n = 54 + img;
@@ -452,18 +442,8 @@ void handle_preview_get(AsyncWebServerRequest* request) {
         request->send(500, "application/json", "{\"error\":\"preview alloc failed\"}");
         return;
     }
+    write_bmp_header(bmp->p, static_cast<uint32_t>(w), static_cast<uint32_t>(h));
     uint8_t* b = bmp->p;
-    put16(b + 0, 0x424D);  // 'BM'
-    put32(b + 2, static_cast<uint32_t>(bmp->n));
-    put32(b + 10, 54);              // pixel data offset
-    put32(b + 14, 40);              // BITMAPINFOHEADER
-    put32(b + 18, static_cast<uint32_t>(w));
-    put32(b + 22, static_cast<uint32_t>(h));  // positive: bottom-up rows
-    put16(b + 26, 1);                         // planes
-    put16(b + 28, 24);                        // bpp
-    put32(b + 34, img);                       // biSizeImage
-    put32(b + 38, 2835);                      // ~72 dpi
-    put32(b + 42, 2835);
     for (uint32_t r = 0; r < static_cast<uint32_t>(h); ++r) {  // BMP row 0 = bottom
         const int y = h - 1 - static_cast<int>(r);
         uint8_t* dst = b + 54 + r * row;

@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "canvas.h"
+#include "bmp.h"
 #include "cache.h"
 #include "card_producer.h"
 #include "clock_widget.h"
@@ -1627,6 +1628,26 @@ static void test_strip_holder(void) {
     TEST_ASSERT_TRUE(h.back() == b0);
 }
 
+// T-8.6 regression: put16(b, 0x424D) writes 4D 42 — "MB" — a live-board bug:
+// byte-perfect 76 KB response, two-byte magic reversed, browser shows the
+// broken-image icon. Pin the magic as bytes and bfSize against the padded
+// row math, including a width that actually pads.
+static void test_bmp_header(void) {
+    uint8_t b[54];
+    nb::web::write_bmp_header(b, 1152, 32);  // the live strip case
+    TEST_ASSERT_EQUAL_CHAR('B', b[0]);
+    TEST_ASSERT_EQUAL_CHAR('M', b[1]);
+    uint32_t size;
+    memcpy(&size, b + 2, 4);
+    TEST_ASSERT_EQUAL_UINT32(54 + nb::web::bmp_row(1152) * 32, size);
+
+    nb::web::write_bmp_header(b, 10, 7);  // row pads 30 -> 32
+    TEST_ASSERT_EQUAL_CHAR('B', b[0]);
+    TEST_ASSERT_EQUAL_CHAR('M', b[1]);
+    memcpy(&size, b + 2, 4);
+    TEST_ASSERT_EQUAL_UINT32(54 + 32 * 7, size);
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_canvas_alloc_strip);
@@ -1666,5 +1687,6 @@ int main(void) {
     RUN_TEST(test_blit_window);
     RUN_TEST(test_page_window_x);
     RUN_TEST(test_strip_holder);
+    RUN_TEST(test_bmp_header);
     return UNITY_END();
 }

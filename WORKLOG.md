@@ -1219,3 +1219,35 @@ snapshot (RAM-sticky flag matches Marquee).
 
 CI: T-8.3..T-8.8 green on main (T-8.7 run cancelled-in-progress by the
 T-8.8 push, its checks ran inside T-8.8's run).
+
+## FIX — preview BMP magic was byte-swapped (2026-09-18)
+
+Dashboard showed the broken-image icon. `curl -i /api/system/preview` →
+**200**, byte-perfect except bytes 0–1: `put16(b+0, 0x424D)` is little-
+endian, so the signature came out `4D 42` — "MB". Every other field
+(bfSize, dims, offsets) was right, which is why the size matched and the
+browser still refused it. The original T-8.6 proof printed
+`magic b'MB'` — it was caught and waved through; the test asserted
+everything except the two bytes that broke it.
+
+Fix exactly as signature-as-characters:
+
+```cpp
+b[0] = 'B';
+b[1] = 'M';
+```
+
+Not `put16(0x4D42)` — the trap must be impossible to re-spring. The
+header writer (with `put16`/`put32`/`bmp_row`) moved to
+`lib/web/bmp.h`, host-compilable; web.cpp calls `write_bmp_header`.
+
+New host test `test_bmp_header` (native 37 → 38 cases): asserts
+`b[0]=='B' && b[1]=='M'` and `bfSize == 54 + bmp_row(w)*h` for both the
+live 1152×32 strip and a padding-width case (10×7, row 30→32). Exactly
+the bug class eyeballing misses.
+
+Live proof after reflash:
+
+```text
+magic b'BM'  bfSize 6966 == computed 6966 == actual 6966
+```
