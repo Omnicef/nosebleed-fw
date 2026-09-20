@@ -1491,3 +1491,37 @@ before `begin` (its `_reset` clears `_size`; `begin` clears the sticky
 `-H "Expect:"` explicitly for scripted uploads; (4) the board takes ~12 s to
 answer HTTP after a reset — a "dead" board in a serial capture at t<12 s is
 the boot, not a fault.
+
+## T-9.5 — logo OTA (hardware-verified 2026-09-20)
+
+`POST /api/logos/update url=<https…>` stores the atlas URL (NVS "nb",
+factory-reset-clearable) and flags the poll task; the poll task fetches
+(boot + daily + on demand — keeping every TLS session single-threaded) into
+a 2 MB PSRAM buffer, validates the whole atlas (magic/version, every index
+row's blob inside the downloaded bytes) **before touching flash**, erases
+the `logos` partition and writes the blob in chunked, yielded ops,
+re-mmaps, and `memcmp`s the mapped bytes against the buffer. Success forces
+a strip rebuild (`g_strip_key = 0`), so new art is on the panel within one
+poll pass. A mid-write failure forfeits the atlas to the T-3.6 abbreviation
+fallback until the next successful check — deliberate: erase happens only
+after full validation, and there is no second copy of the atlas in flash.
+
+Verified on the bench against a real HTTPS host (scratch GitHub repo →
+raw.githubusercontent): **update** — a structurally-valid modified atlas
+(inverted MLB h=13 blobs) downloaded, swapped, and the `/preview` strip
+diffed in 612 bytes; **no-op** — re-trigger on the same source came back
+via **304 in 0.5 s** against a 38 s cold download (git-blob ETag, quoted
+64-hex); **self-heal** — same-URL trigger keeps the stored ETag (a fresh
+URL clears it, a re-saved one must not — first cut cleared it every time,
+killing the 304 forever); restore round-trip ~7 s.
+
+**Traps.** (1) The response ETag needs `cfg.event_handler` +
+`HTTP_EVENT_ON_HEADER` — `esp_http_client_get_header()` reads *request*
+headers only. (2) GitHub's ETag is 66 chars; the first `char etag[64]`
+truncated it — the resend then never matched, silently defeating 304 (the
+compare-200-body fallback still caught it, so the verdict stayed right
+while the bandwidth doubled: keep the field ≥ 80). (3) raw.githubusercontent
+caches a blob for ~5 min, so a repush can serve a stale ETag — a 304 right
+after a real atlas push is the CDN, not the client. (4) The scratch test
+repo `Omnicef/logos-test` is still up — `gh repo delete` needs the
+delete_repo scope; delete by hand.
