@@ -414,6 +414,7 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
 
 const render::StripHolder* g_strip = nullptr;
 void (*g_show_ip_hook)() = nullptr;
+void (*g_reboot_hook)() = nullptr;
 
 // Response-owned PSRAM buffer: the chunked filler's std::function keeps the
 // shared_ptr alive exactly as long as the socket flush needs it — no static
@@ -592,6 +593,35 @@ bool init() {
                 send_json(request, 200, d);
             });
 
+    // T-9.6 — factory reset: clear the "nb" NVS namespace (settings + WiFi
+    // credentials), leave firmware, logos and the web partition alone. The
+    // reboot lands the device in first-boot state: seeded defaults and the
+    // provisioning AP (net.cpp sees no stored credentials and no built-in
+    // target). The confirm arg is the accident guard on this path; the
+    // physical path is the 5 s BOOT hold (main.cpp loop()). Query or form
+    // arg both work — ESPAsyncWebServer folds query params into arg().
+    srv->on(AsyncURIMatcher::exact("/api/system/factory-reset"), AsyncWebRequestMethod::HTTP_POST,
+            [](AsyncWebServerRequest* request) {
+                JsonDocument d;
+                if (request->arg("confirm") != "1") {
+                    d["ok"] = false;
+                    d["error"] = "this erases all settings and wifi credentials; resend with confirm=1";
+                    send_json(request, 400, d);
+                    return;
+                }
+                if (!config::reset()) {
+                    d["ok"] = false;
+                    d["error"] = "NVS clear failed";
+                    send_json(request, 500, d);
+                    return;
+                }
+                Serial.println("[web] factory reset: NVS cleared, rebooting");
+                d["ok"] = true;
+                d["rebooting"] = true;
+                send_json(request, 200, d);
+                if (g_reboot_hook != nullptr) g_reboot_hook();  // deferred: flush first
+            });
+
     // T-9.1 — provisioning POST: onboard.html's form target (urlencoded
     // ssid/pass; the server parses plain POST bodies into arg()). There
     // is deliberately NO GET counterpart and nothing here logs a value —
@@ -653,6 +683,7 @@ bool init() {
 
 void set_preview_source(const render::StripHolder* holder) { g_strip = holder; }
 void set_show_ip_hook(void (*hook)()) { g_show_ip_hook = hook; }
+void set_reboot_hook(void (*hook)()) { g_reboot_hook = hook; }
 
 }  // namespace web
 }  // namespace nb

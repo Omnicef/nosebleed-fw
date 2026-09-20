@@ -27,10 +27,10 @@ bool load(Config& out);
 // settings_event analogue), if any.
 bool save(const Config& c);
 
-// Drop the blob so the next load() seeds defaults (factory-reset hook,
-// T-9.6). true = NVS reachable (blob absent afterwards either way).
-// Also clears the credentials blob — a factory reset returns to
-// first-boot provisioning (T-9.2).
+// Clear the whole "nb" namespace so the next boot seeds defaults — the
+// factory-reset hook (T-9.6). Covers the config blob, the credentials blob
+// (a factory reset returns to first-boot provisioning, T-9.2) and any key
+// added later. true = NVS reachable.
 bool reset();
 
 // T-9.2 — WiFi credentials: separate blob ("net"), deliberately NOT

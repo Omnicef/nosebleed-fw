@@ -24,6 +24,11 @@ void set_preview_source(const render::StripHolder* holder);
 // task's IP splash). No-op if unset.
 void set_show_ip_hook(void (*hook)());
 
+// T-9.6 — POST /api/system/factory-reset (confirmed) fires this after the
+// response is queued; main.cpp arms a deferred esp_restart so the reply
+// flushes first — handlers run on the async_tcp task and must not block it.
+void set_reboot_hook(void (*hook)());
+
 }  // namespace web
 }  // namespace nb
 

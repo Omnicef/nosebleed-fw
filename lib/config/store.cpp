@@ -52,11 +52,13 @@ bool save(const Config& c) {
 bool reset() {
     Preferences p;
     if (!p.begin(kNs)) return false;
-    const bool had = p.getBytesLength(kKey) > 0;
-    const bool gone = !had || p.remove(kKey);
-    const bool creds_gone = p.getBytesLength(kKeyNet) == 0 || p.remove(kKeyNet);
+    // Whole-namespace clear (T-9.6): cfg, creds and every key added later
+    // (logo OTA url/etag, …) without touching this function. WiFi keeps its
+    // own namespace (nvs.net80211), as does every other component — none of
+    // it is "our" config, and none of it is cleared.
+    const bool cleared = p.clear();
     p.end();
-    return gone && creds_gone;
+    return cleared;
 }
 
 // T-9.2 — credentials. Separate blob, no logging anywhere in this path.

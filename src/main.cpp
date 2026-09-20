@@ -34,6 +34,7 @@ static void heartbeat(const char* name) {
 #include <atomic>
 #include <cstring>
 #include <ctime>
+#include "esp_system.h"  // esp_restart (T-9.6 factory-reset reboot)
 #include "cache.h"
 #include "clock_widget.h"
 #include "date_window.h"
@@ -224,6 +225,27 @@ static void arm_splash(const char* msg) {
     g_ip_deadline.store(dl, std::memory_order_release);
 }
 static void web_show_ip() { arm_splash(WiFi.localIP().toString().c_str()); }
+
+// T-9.6 — factory reset, physical path. The DevKitC-1 "BOOT" button (GPIO0)
+// is the only user button the board has and the panel pin map (T-2.8) leaves
+// it free. 5 s hold while RUNNING (loop() below) clears NVS and reboots —
+// for a device whose network config is what's broken. The boot-time strap
+// meaning of GPIO0 (download mode) is untouched: the loop only counts holds
+// after the app is up. Web path: POST /api/system/factory-reset?confirm=1
+// (web.cpp) calls arm_reboot() after its response is queued — handlers run
+// on async_tcp and cannot block to flush, so loop() does the restart.
+static constexpr int kResetBtn = 0;  // GPIO0 = BOOT button
+static std::atomic<uint32_t> g_reboot_at{0};
+static void arm_reboot() {
+    uint32_t dl = millis() + 700;
+    if (dl == 0) dl = 1;  // 0 means "not armed"
+    g_reboot_at.store(dl, std::memory_order_release);
+}
+static void do_reboot(const char* why) {
+    Serial.printf("[reset] %s — rebooting to first-boot state (defaults + provisioning)\n", why);
+    Serial.flush();
+    esp_restart();
+}
 
 static void task_render(void*) {
     nb::config::bind_render_task(xTaskGetCurrentTaskHandle());
@@ -482,6 +504,8 @@ void setup() {
   WiFi.setSleep(false);
   nb::web::set_preview_source(&g_holder);  // T-8.6 /preview
   nb::web::set_show_ip_hook(web_show_ip);
+  nb::web::set_reboot_hook(arm_reboot);   // T-9.6 factory reset (web path)
+  pinMode(kResetBtn, INPUT_PULLUP);       // T-9.6 factory reset (BOOT hold)
 
   // Exact cores / priorities / stacks from AGENTS.md. ESP-IDF's
   // xTaskCreatePinnedToCore takes the stack size in BYTES on this port.
@@ -491,7 +515,23 @@ void setup() {
   xTaskCreatePinnedToCore(task_net,    "net",     4 * 1024, nullptr, 1, nullptr, 0);
 }
 
-void loop() { vTaskDelay(pdMS_TO_TICKS(10000)); }
+void loop() {
+    // T-9.6 factory-reset chores, 100 ms tick (see kResetBtn above).
+    static uint32_t held = 0;
+    if (digitalRead(kResetBtn) == LOW) {
+        if (++held >= 50) {  // 5 s continuous hold
+            if (nb::config::reset())
+                do_reboot("BOOT held 5 s: NVS cleared");
+            else
+                do_reboot("BOOT held 5 s: NVS clear FAILED (still wiping boot state)");
+        }
+    } else {
+        held = 0;
+    }
+    const uint32_t dl = g_reboot_at.load(std::memory_order_acquire);
+    if (dl != 0 && static_cast<int32_t>(millis() - dl) >= 0) do_reboot("web factory reset");
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
 
 #else
 // T-2.10 — native live preview: the scrolling strip rendered through
