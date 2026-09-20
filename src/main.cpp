@@ -308,13 +308,6 @@ static void task_render(void*) {
 static void task_poll(void*) {
     using namespace nb::data;
     static PollScheduler sch;
-    for (int i = 0; i < nb::config::kLeagueSlugCount; ++i) sch.set(i, {false, 20, 120});
-    for (int i = 0; i < g_cfg.league_count; ++i) {
-        const int lg = league_of_slug(g_cfg.leagues[i].id);
-        if (lg >= 0)
-            sch.set(lg, {g_cfg.leagues[i].enabled != 0, g_cfg.leagues[i].poll_interval_live,
-                         g_cfg.leagues[i].poll_interval_idle});
-    }
     while (time(nullptr) < 1700000000) vTaskDelay(pdMS_TO_TICKS(200));  // SNTP first (TLS)
     sch.reset(time(nullptr));
     for (;;) {
@@ -324,6 +317,17 @@ static void task_poll(void*) {
         // mutation of g_cfg.
         static nb::config::Config pc;
         nb::config::load(pc);
+        // D-3: the scheduler config is re-applied EVERY pass from pc — an
+        // enable via /api must start polling without a reboot. set() touches
+        // cfg_ only; the due_ schedule survives, so a mid-life enable is due
+        // at once (stale due_ is in the past) and a disable just stops runs.
+        for (int i = 0; i < kLeagueSlugCount; ++i) sch.set(i, {false, 20, 120});
+        for (int i = 0; i < pc.league_count; ++i) {
+            const int lg = league_of_slug(pc.leagues[i].id);
+            if (lg >= 0)
+                sch.set(lg, {pc.leagues[i].enabled != 0, pc.leagues[i].poll_interval_live,
+                             pc.leagues[i].poll_interval_idle});
+        }
         const time_t now = time(nullptr);
         for (int lg = 0; lg < kLeagueSlugCount; ++lg) {
             if (!sch.due(lg, now)) continue;

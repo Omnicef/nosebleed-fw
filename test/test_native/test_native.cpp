@@ -896,6 +896,21 @@ static void test_data_poll_scheduler(void) {
     sch.set(3, off);
     sch.set(5, off);
     TEST_ASSERT_EQUAL_INT64(t0 + 999, sch.next_wake(t0 + 999));
+
+    // D-3: a runtime re-apply (poll task re-arms cfg_ from a fresh config
+    // copy every pass) must NOT disturb due_ — an enable late in life is due
+    // immediately, a disable stops runs, and a live→off→on round-trip leaves
+    // the schedule exactly where done() left it.
+    sch.set(2, live);  // mid-life enable, never reset() since t0: due_ = t0+10
+    TEST_ASSERT_FALSE(sch.due(2, t0));
+    TEST_ASSERT_TRUE(sch.due(2, t0 + 10));
+    sch.done(2, t0 + 10, false);        // next due t0+130 (idle)
+    sch.set(2, off);                    // disable mid-flight
+    TEST_ASSERT_FALSE(sch.due(2, t0 + 200));
+    sch.set(2, live);                   // re-enable: due_ (t0+130) preserved
+    TEST_ASSERT_TRUE(sch.due(2, t0 + 130));
+    sch.done(2, t0 + 130, true);        // live cadence from here
+    TEST_ASSERT_TRUE(sch.due(2, t0 + 150));
 }
 
 static bool fixed_local(void* ctx, int64_t, render::LocalTime& out) {
