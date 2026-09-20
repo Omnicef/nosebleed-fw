@@ -186,6 +186,11 @@ static void boot_rebuild_strip(int64_t now, const nb::config::Config& cfg) {
                                         nb::panel::height(), now);
     nb::logos::set_phase(nb::logos::Phase::FRAME);
     if (placed > 0) g_holder.commit();  // 0 = nothing visible / OOM: keep last good
+#ifdef NB_D2_TRACE
+    if (placed > 0)
+        Serial.printf("[d2] %lu commit gen=%lu cards=%d\n", static_cast<unsigned long>(millis()),
+                      static_cast<unsigned long>(g_holder.generation()), placed);
+#endif
     const nb::render::Strip* f = g_holder.front();
     Serial.printf("[strip] rebuilt: %d cards%s, w=%d, pages=%d\n", placed,
                   g_builder.truncated() ? ", PRODUCERS TRUNCATED" : "",
@@ -274,11 +279,23 @@ static void task_render(void*) {
             const uint32_t g = g_holder.generation();
             if (g != seen_gen) {
                 seen_gen = g;
+#ifdef NB_D2_TRACE
+                Serial.printf("[d2] %lu gen=%lu visible w=%d pages=%d\n",
+                              static_cast<unsigned long>(millis()), static_cast<unsigned long>(g), s->canvas.w, s->page_count);
+#endif
                 scroll = nb::render::scroll_rewrap(static_cast<int32_t>(scroll), s->canvas.w, pw);
             }
             int w0;
             if (g_cfg.hw.display_mode == nb::config::kDisplayStatic) {
+#ifdef NB_D2_TRACE
+                const int page_before = pst.page;
+#endif
                 w0 = nb::render::page_window_x(*s, pst, now, render_dwell_s());
+#ifdef NB_D2_TRACE
+                if (pst.page != page_before)
+                    Serial.printf("[d2] %lu page %d->%d\n", static_cast<unsigned long>(millis()),
+                                  page_before, pst.page);
+#endif
             } else {
                 const uint32_t ms = millis();
                 scroll += static_cast<double>(g_cfg.hw.scroll_speed) * (ms - last_ms) / 1000.0;

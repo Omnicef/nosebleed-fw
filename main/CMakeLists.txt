@@ -87,6 +87,14 @@ elseif(NB_TARGET STREQUAL "cardtest")
     target_compile_definitions(${COMPONENT_LIB} PUBLIC NB_CARD_TEST=1)
 endif()
 
+# D-2 diagnostic: millis-stamped page transitions and strip commits on Serial.
+# OFF by default and re-forced OFF by idf_build.sh on every run that doesn't
+# pass --trace, so it can never ride into a shipping build via stale cache.
+option(NB_D2_TRACE "print [d2] page-transition / strip-commit markers" OFF)
+if(NB_D2_TRACE)
+    target_compile_definitions(${COMPONENT_LIB} PUBLIC NB_D2_TRACE=1)
+endif()
+
 # IDF builds C++ as gnu++23 by default; pin the project's C++17 contract.
 target_compile_features(${COMPONENT_LIB} PRIVATE cxx_std_17)
 set_target_properties(${COMPONENT_LIB} PROPERTIES CXX_EXTENSIONS ON)
