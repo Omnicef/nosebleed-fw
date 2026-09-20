@@ -1448,3 +1448,46 @@ flash a stale binary (happened twice before I checked strings on the .bin).
 the port. (3) The confirmed-POST client may see a connection reset instead of
 the JSON if the restart wins the flush race; the serial record, not the curl
 exit code, is the evidence (700 ms makes it rare, not impossible).
+
+## T-9.4 — firmware OTA (hardware-verified 2026-09-20)
+
+`PUT /api/update`, raw body via `AsyncWebHandler::handleBody` → arduino
+`Update` lib (`begin(total, U_FLASH)` / `write` / `end(true)`), deferred
+reboot through the existing T-9.6 hook. Good-image round-trip on the bench:
+`{"ok":true,"rebooting":true}` [200], boot flips slots, `[ota] running from
+appX, state=N` on every boot, USB flashing untouched (GPLv3 §6).
+
+**The rollback story is not the PLAN's story.** `CONFIG_BOOTLOADER_APP_ROLLBACK_
+ENABLE` and the `PENDING_VERIFY → mark-valid/ABORTED` dance are live in
+`sdkconfig`, and a hand-written otadata entry (esptool, `state=NEW`) proves
+the *bootloader* half works — it converts, excludes and falls back exactly
+as `bootloader_utility.c` says. But the **app-side staging never enters the
+machine here**: a raw otadata dump at the top of `setup()` (TEMP debug build)
+showed the staged slot already `VALID` at boot#1 (`entry1 seq=2 state=02`),
+so a bad image crash-loops every bootloader pass (`abort() was called at PC
+0x4200efd2` ×N). Whatever in the app_update→otadata write path produces that
+on this toolchain is still unexplained and out of T-9.4's scope; the
+mechanism was measured broken on-device, so nothing here depends on it.
+
+**What ships instead:** `NbBootGuard` in `main.cpp` — an `RTC_NOINIT_ATTR`
+counter keyed to the running image's ELF-sha256 (a fresh flash can never
+inherit an armed counter). Armed at the top of `setup()`, disarmed at the
+bottom; 3 consecutive boots of the same image without reaching the bottom
+call `esp_ota_mark_app_invalid_rollback_and_reboot()`, and the bootloader —
+which does exclude INVALID entries, that half works — falls back. Verified
+end-to-end: bad image (same tree + `abort()`) crash-looped twice, on the 3rd
+boot printed `[ota] 3rd consecutive boot without completing setup — rolling
+back`, and the board returned `running from app0, state=2` fully healthy at
+30.3 fps with the panel still disconnected.
+
+**Traps.** (1) `canHandle` matching on the **bare** `HTTP_PUT` compiles but
+resolves to the global `http_parser` `enum http_method` (value 4), not the
+`AsyncWebRequestMethod` bit the request reports — the 404/204 flapping before
+was this, not the server; match on the namespaced constant. (2) `Update.begin`
+returns false after an aborted upload (`already running`) — `Update.abort()`
+before `begin` (its `_reset` clears `_size`; `begin` clears the sticky
+`UPDATE_ERROR_ABORT`), so retry works without a reboot. (3) curl's default
+`Expect: 100-continue` handshake against ESPAsyncWebServer: send
+`-H "Expect:"` explicitly for scripted uploads; (4) the board takes ~12 s to
+answer HTTP after a reset — a "dead" board in a serial capture at t<12 s is
+the boot, not a fault.
