@@ -102,6 +102,9 @@ jobs:
             echo "::error::CMakeLists.txt missing — IDF project vanished"
             exit 1
           fi
+          # GH runs each step in a non-login shell; the image's entrypoint
+          # export never applies, so idf.py is not on PATH until we source it.
+          . "$IDF_PATH/export.sh"
           tools/idf_build.sh firmware build 2>&1 | tee build.log
 
       # Static footprint via idf.py size. The DRAM/STATIC columns are the
@@ -110,6 +113,7 @@ jobs:
       - name: Memory report
         if: steps.build.outcome == 'success'
         run: |
+          . "$IDF_PATH/export.sh"
           {
             echo "### Static footprint (idf.py size)"
             echo '```'
