@@ -1405,3 +1405,46 @@ as PLAN §4a D-5.
 
 User config wiped by the acceptance erases was restored via the API
 (static, brightness 40, nfl/nhl/mlb) and verified across a reboot.
+
+## T-9.6 — factory reset (2026-09-20)
+
+Built: `config::reset()` widened from two named keys to a whole-namespace
+`Preferences::clear()` on `nb` (covers creds and every future key — logo OTA
+— with no edit; component namespaces like `nvs.net80211` are untouched);
+`POST /api/system/factory-reset` with a `confirm=1` guard arg (anything else
+400s with the resend hint); the physical path is the DevKitC-1 BOOT button
+(GPIO0 — free per the T-2.8 pin map) held **5 s while running**, polled in
+`loop()` at 100 ms, which was already idle at a 10 s tick. Web path defers
+`esp_restart()` ~700 ms via a `set_reboot_hook` deadline (same pattern as
+show-ip) because handlers run on `async_tcp` and blocking it would skip the
+response flush. Firmware, `logos` and `web` partitions are never in scope.
+
+**Acceptance, all on hardware (panel disconnected — see note):** guard → 400
+(absent arg and `confirm=0` both rejected); confirmed POST → 200
+`{"ok":true,"rebooting":true}` → serial shows `factory reset: NVS cleared` →
+reboot → `cfg NOT_FOUND` / `net NOT_FOUND` → defaults reseeded
+(brightness 80, scroll, mlb-only vs the live 40/static/3-league) → board
+rejoins on the build-time fallback, proving the saved-credentials blob died
+with the rest; BOOT 5 s hold → `[reset] BOOT held 5 s: NVS…` → same wipe.
+Rebuilt **without** gitignored `secrets.h` (the shipping shape): the
+post-reset state comes up as **`[net] AP nosebleed-7A8F20 open`** — portal
+serves SPA (5,705 B) and `/onboard`, re-provision over the AP joins the
+network, factory-reset over LAN returns it to the AP again. `logos` FOUND at
+0x810000 with no `partition missed` and 16 game cards rebuilt across the
+whole battery; user config restored via API afterwards.
+
+**Panel-less render note (ribbon-loose state):** with the ribbon off,
+`panel::init` still succeeds (the DMA path doesn't detect the load), render
+held **30.3 fps, worst steady-state gap 34 ms** through fetches and strip
+rebuilds, and nothing anywhere errors — a detached panel is a dark panel,
+not a degraded one. The T-7.6 "hitch, never blank" contract is unchanged by
+this task; full verification still wants eyes on real glass.
+
+**Traps.** (1) GCC depfiles do not track headers probed via
+`__has_include("secrets.h")` — restoring the file did not retrigger
+net.cpp/main.cpp; `touch` the includers after toggling secrets or you will
+flash a stale binary (happened twice before I checked strings on the .bin).
+(2) `pkill`-ing the serial logger before `idf.py flash` — esptool cannot win
+the port. (3) The confirmed-POST client may see a connection reset instead of
+the JSON if the restart wins the flush race; the serial record, not the curl
+exit code, is the evidence (700 ms makes it rare, not impossible).
