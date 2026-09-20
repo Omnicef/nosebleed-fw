@@ -87,12 +87,12 @@ the 50–80 KB expectation. SNTP is ~504 B in steady state — effectively free 
 | Consumer | Budget |
 |---|---|
 | HUB75 DMA framebuffer, 64×32, 8-bit depth, double-buffered | **61 KB** measured at `begin()` (32 KB fb + ~29 KB driver task stack/structs) |
-| mbedTLS session, peak, one connection | **53 KB** (measured; see below) |
+| mbedTLS session, peak, one connection | **40 KB** tuned (39.8 KB in-session / 42.5 KB handshake peak, measured post-T-9.3; was 53 KB untuned) |
 | HTTP stream buffer | 4–8 KB |
 | Task stacks (4) | ~32 KB |
 | Web server + connections | 20–40 KB |
-| **Total** | **141–165 KB** |
-| **Headroom** | **~97–121 KB** |
+| **Total** | **125–149 KB** |
+| **Headroom** | **~113–137 KB** |
 
 DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **16 KB per buffer**.
 
@@ -100,7 +100,9 @@ DMA framebuffer arithmetic: 16 row-pairs × 8 bit-planes × (64 px × 2 B) = **1
 > core (prebuilt `libmbedtls`, no from-source path). The IDF build compiles mbedTLS from source and
 > `sdkconfig.defaults` now actually lands: `ASYMMETRIC_CONTENT_LEN`, `SSL_IN=16384 / SSL_OUT=2048`,
 > drop-keep-peer-cert, and the 64 KB data cache (also unreachable at T-1.3). The ~14 KB per-session recovery
-> is a runtime-heap effect — re-measure the ~53 KB session figure on hardware against the T-0.4 numbers.
+> is a runtime-heap effect — **confirmed on hardware: session 53 KB → 39.8 KB (peak 42.5 KB, ~16 KB recovered).**
+> Measure it as repeated-handshake steady state with a 1 ms region sampler — a single first-run pre/post delta
+> inflates by several KB and will read as "no effect" (this exact trap produced a false negative once).
 
 > **Superseded projection.** This file previously claimed "~320 KB usable after WiFi" *and* listed WiFi as a 50–80 KB
 > consumer — internally inconsistent, since a post-WiFi figure already has WiFi deducted. Measurement settled it:

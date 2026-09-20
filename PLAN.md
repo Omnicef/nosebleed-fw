@@ -669,6 +669,33 @@ Two mechanisms remain, and the log discriminates them:
 If `w=` and `pages=` are constant in the log and it still flickers, both mechanisms are wrong and the fault is
 elsewhere.
 
+**Capture 2026-09-19 (T-9.3 verification session).** Static mode, live MLB slate, 11-card strip, MLB enabled:
+every `[strip] rebuilt:` in a 2-minute window reported **`11 cards, w=792, pages=11` — constant; no TRUNCATED;
+no favourites set** (ordering cannot move). Observed rebuild cadence 17–36 s = the 20 s live poll plus stagger —
+**no rebuild source in the pipeline can produce 5–8 s with one live league, and the reported 5–8 s is an eyeball
+estimate the author has since flagged as unreliable.** On the observed stream both surviving mechanisms are
+excluded. Remaining step is human correlation: `tools/idf_build.sh firmware --trace build flash` prints
+millis-stamped `[d2]` markers — `commit gen=N` (poll side), `gen=N visible` (first frame painted from it) and
+`page A->B` (static paging dwell advance). If flicker lands on neither, the fault is not page arithmetic and the
+planned ~6-line x-anchoring fix would fix nothing. The flag is `NB_D2_TRACE`, OFF by default and re-forced OFF
+by `idf_build.sh` on every non-`--trace` run — it cannot ride into a shipping build via stale cache.
+
+### D-4 — Warm reset lets poll race ahead of WiFi (TLS before a route exists)
+
+`task_poll` gates on `time(nullptr) < 1700000000` — that asks *"do we have a clock?"*, not *"do we have a
+network?"*. The wall clock lives in the always-on RTC and **survives a warm reset**, so after a soft/warm reset
+the poll task passes the gate instantly and the first ESPN fetch fires ~3.7 s before WiFi has an address:
+`esp-tls: couldn't get hostname … getaddrinfo() returns 202` ×3 (boot log 2026-09-19, errors at 3727–3735 ms,
+`[net] wifi` at ~3.9 s), then the retry backoff recovers on the next sweep. It recovers — but it inverts the
+**WiFi → SNTP → TLS** ordering AGENTS.md states as a hard rule (TLS attempted while there is no route; the
+`notBefore`-date protection the rule exists for is vacuous on this path). Pre-existing, not a T-9.3 regression;
+same gate code both sides of the conversion. Fix: gate on `WiFi.status() == WL_CONNECTED` as well as the clock.
+
+**Trivial sdkconfig trim (related boot-log noise):** every reset prints
+`E esp_core_dump_flash: No core dump partition found!` ×2 — IDF builds core-dump support on and
+`partitions.csv` has no `coredump` row. Either add the partition or turn core-dump collection off; until then
+the pair of `E` lines is expected and harmless.
+
 ---
 
 ## §5 Risk register
@@ -694,9 +721,12 @@ elsewhere.
 |---|---|---|
 | **Memory** | | |
 | Internal heap ceiling, WiFi + SNTP up | **~262 KB** (268,652 B W; hardware ~6 KB lower) | M |
-| mbedTLS session, peak | **~53 KB** (W) / **~56 KB** (M) — **untunable until T-9.3** | M |
-| Peak simultaneous mbedTLS + active parse | **73,616 B (71.9 KB)** | M |
-| Consumers vs ceiling | 141–165 KB used, **~97–121 KB headroom** | M |
+| mbedTLS session, untuned | **~53 KB** (W) / **~56 KB** (M) — the Arduino-core baseline (T-0.4/T-0.5) | M |
+| mbedTLS session, **tuned (post-T-9.3)**: in-session / handshake peak | **39,800 ± 10 B / 42,544 B** — **~16 KB recovered**, landing on the ~39 KB prediction | M |
+| mbedTLS tuning A/B proof | OUT 2048→16384 moves the handshake peak drop by **14,464 B ≡ 16384−2048** — the sdkconfig settings are live at runtime (verified through to the linked objects) | M |
+| TLS session measurement method | **repeated-handshake steady state + 1 ms internal/PSRAM region sampler**, not a single pre/post delta — first-run-after-boot samples inflate by several KB (52.3 / 52.1 / 43.5 KB on byte-identical builds; this trap produced the earlier "±0 sensitivity" false negative) | M |
+| Peak simultaneous mbedTLS + active parse | **73,616 B (71.9 KB)** — untuned era; the session component is now ~16 KB lower | M |
+| Consumers vs ceiling | **125–149 KB used, ~113–137 KB headroom** post-T-9.3 (was 141–165 / ~97–121 with the 53 KB session) | M |
 | DMA framebuffer, 64×32 | **61 KB internal** measured at `begin()` (double-buffered: 32 KB fb + ~29 KB driver task stack/structs) — not the 32 KB projected | M |
 | `esp_partition_mmap()` one-time cost | ~104 B page tables; per-lookup **0 B** | M |
 | PSRAM total use | < 400 KB of 8 MB | P |
@@ -728,5 +758,6 @@ elsewhere.
 | `draw.polygon()` call sites | 4 — needs a scanline fill helper | M |
 
 > Superseded projections, kept so they are not re-derived: ~320 KB usable after WiFi (WiFi was double-counted — it is
-> ~262 KB); 26–36 KB tuned mbedTLS (**unreachable on the Arduino core**, T-0.6); ~14 KB asymmetric-content-len saving
-> (deferred to T-9.3); ~306 KB atlas (actual 258,992 B); ~20 B index stride (actual 22 B — cost 20 desynced lookups).
+> ~262 KB); 26–36 KB tuned mbedTLS (**unreachable on the Arduino core**, T-0.6 — and optimistic even at T-9.3: actual
+> 39.8 KB); ~14 KB asymmetric-content-len saving (delivered ~16 KB at T-9.3, measured per above); ~306 KB atlas
+> (actual 258,992 B); ~20 B index stride (actual 22 B — cost 20 desynced lookups).
