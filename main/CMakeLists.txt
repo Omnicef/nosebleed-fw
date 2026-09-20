@@ -60,6 +60,7 @@ idf_component_register(
         esp-tls
         nvs_flash
         spiffs
+        app_update
         bblanchon__arduinojson
         esp32async__espasyncwebserver
         nb_streamutils

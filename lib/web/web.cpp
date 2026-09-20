@@ -8,6 +8,7 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
+#include <Update.h>  // T-9.4 — esp_ota wrapper (arduino-esp32 component library)
 #include <WiFi.h>
 #include <esp_heap_caps.h>
 
@@ -33,6 +34,7 @@ namespace {
 
 AsyncWebServer* g_server = nullptr;
 bool g_fs_mounted = false;
+void (*g_reboot_hook)(const char*) = nullptr;  // T-9.6/9.4 deferred restart
 
 // T-4.4 restart banner, sticky once set on a save whose structural fields
 // changed vs the stored value. RAM-only by design: a reboot applies the new
@@ -69,6 +71,80 @@ void settings_json(const config::Config& c, JsonDocument& d) {
 }
 
 long lclamp(long v, long lo, long hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// ─── T-9.4 — firmware OTA: PUT /api/update, raw binary body ───────────────
+//
+// The Arduino Update library is the esp_ota wrapper shipped inside the
+// arduino-esp32 component (libraries/Update/src/Update.h; verified against
+// that header). begin() picks the inactive app slot, end() verifies the
+// image and only THEN calls esp_ota_set_boot_partition — a corrupt upload
+// can never point the bootloader at garbage. With rollback enabled (it is) the
+// new image boots PENDING_VERIFY and main.cpp's esp_ota_mark_app_valid_cancel_rollback()
+// is reached only if the image survives its own startup — an image that
+// panics pre-validation is marked ABORTED by the next bootloader pass and
+// the other slot wins (verified in bootloader_utility.c /
+// bootloader_common_loader.c of IDF 5.5.5). USB flashing stays fully
+// supported alongside OTA — GPLv3 §6 means owners can always install their
+// own builds by other means.
+class OtaHandler : public AsyncWebHandler {
+  public:
+    bool canHandle(AsyncWebServerRequest* request) const override {
+        return request->method() == HTTP_PUT && request->url() == "/api/update";
+    }
+    bool isRequestHandlerTrivial() const override { return false; }
+
+    void handleBody(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index,
+                    size_t total) override {
+        if (index == 0) {
+            aborted_ = false;
+            got_ = 0;
+            if (total == 0) {  // no Content-Length — Update.begin wants a size (curl -T sends one)
+                request->send(411, "application/json",
+                              "{\"error\":\"Content-Length required (use: curl -T firmware.bin .../api/update)\"}");
+                aborted_ = true;
+                return;
+            }
+            if (!Update.begin(total, U_FLASH)) {
+                Update.printError(Serial);
+                request->send(400, "application/json",
+                              "{\"error\":\"refused: no inactive app slot, or image larger than the slot\"}");
+                aborted_ = true;
+                return;
+            }
+            Serial.printf("[ota] update started: %u B\n", static_cast<unsigned>(total));
+        }
+        if (aborted_) return;
+        if (Update.write(data, len) != len) {
+            Update.printError(Serial);
+            Update.abort();  // idempotent; releases the staging handle
+            request->send(500, "application/json", "{\"error\":\"flash write failed mid-upload\"}");
+            aborted_ = true;
+            return;
+        }
+        got_ += len;
+        if (got_ / 0x40000 != (got_ - len) / 0x40000)
+            Serial.printf("[ota] %u / %u B\n", static_cast<unsigned>(got_), static_cast<unsigned>(total));
+    }
+
+    void handleRequest(AsyncWebServerRequest* request) override {
+        if (aborted_) return;  // a response already went out mid-stream
+        if (!Update.end(true)) {  // validates the image; sets the boot slot only on success
+            Update.printError(Serial);
+            request->send(422, "application/json",
+                          "{\"error\":\"image invalid — boot target unchanged\"}");
+            return;
+        }
+        Serial.println("[ota] image valid, rebooting into it (rolls back if it fails to start)");
+        request->send(200, "application/json", "{\"ok\":true,\"rebooting\":true}");
+        if (g_reboot_hook != nullptr) g_reboot_hook("firmware update applied");
+    }
+
+  private:
+    bool aborted_ = true;
+    size_t got_ = 0;
+};
+
+OtaHandler g_ota;  // static — one instance, registered below
 
 // PUT /api/settings body — the SPA's full form. Absent keys keep their
 // stored values; out-of-range numbers are clamped, wrong types ignored.
@@ -414,7 +490,6 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
 
 const render::StripHolder* g_strip = nullptr;
 void (*g_show_ip_hook)() = nullptr;
-void (*g_reboot_hook)() = nullptr;
 
 // Response-owned PSRAM buffer: the chunked filler's std::function keeps the
 // shared_ptr alive exactly as long as the socket flush needs it — no static
@@ -619,8 +694,11 @@ bool init() {
                 d["ok"] = true;
                 d["rebooting"] = true;
                 send_json(request, 200, d);
-                if (g_reboot_hook != nullptr) g_reboot_hook();  // deferred: flush first
+                if (g_reboot_hook != nullptr) g_reboot_hook("factory reset: NVS cleared");
             });
+
+    // T-9.4 — firmware OTA upload target.
+    srv->addHandler(&g_ota);
 
     // T-9.1 — provisioning POST: onboard.html's form target (urlencoded
     // ssid/pass; the server parses plain POST bodies into arg()). There
@@ -683,7 +761,7 @@ bool init() {
 
 void set_preview_source(const render::StripHolder* holder) { g_strip = holder; }
 void set_show_ip_hook(void (*hook)()) { g_show_ip_hook = hook; }
-void set_reboot_hook(void (*hook)()) { g_reboot_hook = hook; }
+void set_reboot_hook(void (*hook)(const char*)) { g_reboot_hook = hook; }
 
 }  // namespace web
 }  // namespace nb

@@ -35,6 +35,7 @@ static void heartbeat(const char* name) {
 #include <cstring>
 #include <ctime>
 #include "esp_system.h"  // esp_restart (T-9.6 factory-reset reboot)
+#include "esp_ota_ops.h"   // T-9.4 rollback validation
 #include "cache.h"
 #include "clock_widget.h"
 #include "date_window.h"
@@ -236,13 +237,15 @@ static void web_show_ip() { arm_splash(WiFi.localIP().toString().c_str()); }
 // on async_tcp and cannot block to flush, so loop() does the restart.
 static constexpr int kResetBtn = 0;  // GPIO0 = BOOT button
 static std::atomic<uint32_t> g_reboot_at{0};
-static void arm_reboot() {
+static const char* g_reboot_why = "";  // set before arming; loop() prints it on the way out
+static void arm_reboot(const char* why) {
+    g_reboot_why = why;
     uint32_t dl = millis() + 700;
     if (dl == 0) dl = 1;  // 0 means "not armed"
     g_reboot_at.store(dl, std::memory_order_release);
 }
 static void do_reboot(const char* why) {
-    Serial.printf("[reset] %s — rebooting to first-boot state (defaults + provisioning)\n", why);
+    Serial.printf("[reset] %s — rebooting\n", why);
     Serial.flush();
     esp_restart();
 }
@@ -513,6 +516,23 @@ void setup() {
   xTaskCreatePinnedToCore(task_poll,   "poll",   12 * 1024, nullptr, 2, nullptr, 0);
   xTaskCreatePinnedToCore(task_web,    "web",     8 * 1024, nullptr, 2, nullptr, 0);
   xTaskCreatePinnedToCore(task_net,    "net",     4 * 1024, nullptr, 1, nullptr, 0);
+
+  // T-9.4 — rollback validation, deliberately LAST in setup(): reaching this
+  // line is itself the self-test. Any reset before it (panic, WDT bite,
+  // brownout on a bad image) leaves the slot PENDING_VERIFY, and the next
+  // bootloader pass marks it ABORTED and falls back to the other app slot
+  // (IDF 5.5.5 bootloader_utility.c). esp_ota_get_state_partition /
+  // mark_app_valid_cancel_rollback signatures per app_update esp_ota_ops.h.
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  const esp_partition_t* configured = esp_ota_get_boot_partition();
+  if (running != configured)
+      Serial.printf("[ota] bootloader fell back to %s after a failed update\n", running->label);
+  esp_ota_img_states_t ota_state;
+  if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
+      ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+      if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
+          Serial.printf("[ota] %s confirmed good, rollback cancelled\n", running->label);
+  }
 }
 
 void loop() {
@@ -529,7 +549,7 @@ void loop() {
         held = 0;
     }
     const uint32_t dl = g_reboot_at.load(std::memory_order_acquire);
-    if (dl != 0 && static_cast<int32_t>(millis() - dl) >= 0) do_reboot("web factory reset");
+    if (dl != 0 && static_cast<int32_t>(millis() - dl) >= 0) do_reboot(g_reboot_why);
     vTaskDelay(pdMS_TO_TICKS(100));
 }
 
