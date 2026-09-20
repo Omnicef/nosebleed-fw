@@ -36,6 +36,7 @@ static void heartbeat(const char* name) {
 #include <ctime>
 #include "esp_system.h"  // esp_restart (T-9.6 factory-reset reboot)
 #include "esp_ota_ops.h"   // T-9.4 rollback validation
+#include "esp_app_format.h"  // esp_app_desc_t (boot-guard image id)
 #include "cache.h"
 #include "clock_widget.h"
 #include "date_window.h"
@@ -472,8 +473,64 @@ static void task_net(void*) {
     }
 }
 
+// T-9.4 crash-loop rollback. The IDF pending-state machine is NOT the gate
+// here: measured on this board (2026-09-20), esp_ota_set_boot_partition()
+// leaves the staged entry VALID at boot#1 (raw otadata dump), so nothing
+// ever reaches PENDING_VERIFY→ABORTED — yet a hand-written NEW entry IS
+// converted and de-selected correctly, and the bootloader always excludes
+// INVALID/ABORTED entries (bootloader_common_ota_select_invalid). So the
+// image guards itself: an RTC counter (survives panic/abort/WDT resets)
+// armed on every boot and disarmed at the end of setup(); three
+// consecutive boots of the SAME image without completing setup() call
+// esp_ota_mark_app_invalid_rollback_and_reboot(), the bootloader excludes
+// the INVALID entry and the other slot wins. The app-build id changes
+// with the image, so a fresh flash can never inherit an armed counter.
+struct NbBootGuard {
+    uint32_t magic;
+    uint32_t attempts;
+    uint32_t image_id;  // FNV-1a of the running image's ELF sha256 (per-build)
+};
+constexpr uint32_t kGuardMagic = 0x4E424731;  // "NBG1"
+RTC_NOINIT_ATTR NbBootGuard g_boot_guard;
+
+inline uint32_t running_image_id() {
+    esp_app_desc_t desc;
+    if (esp_ota_get_partition_description(esp_ota_get_running_partition(), &desc) == ESP_OK) {
+        uint32_t id = 2166136261u;
+        for (unsigned i = 0; i < sizeof(desc.app_elf_sha256); i++) {
+            id ^= desc.app_elf_sha256[i];
+            id *= 16777619u;
+        }
+        return id;
+    }
+    return 0;
+}
+
+// True when this is the first boot of a DIFFERENT image — the new image
+// always starts with a disarmed guard.
+bool guard_new_image() {
+    const uint32_t id = running_image_id();
+    if (g_boot_guard.magic != kGuardMagic || g_boot_guard.image_id != id) {
+        g_boot_guard.magic = kGuardMagic;
+        g_boot_guard.image_id = id;
+        g_boot_guard.attempts = 0;
+        return true;
+    }
+    return false;
+}
+
 void setup() {
   boot_prologue();      // banner, sdkconfig/partition snapshots, PSRAM allocator
+  esp_ota_img_states_t boot_state = ESP_OTA_IMG_UNDEFINED;
+  const esp_err_t boot_state_err =
+      esp_ota_get_state_partition(esp_ota_get_running_partition(), &boot_state);
+  Serial.printf("[ota] running from %s, state=%u err=%s\n", esp_ota_get_running_partition()->label,
+                static_cast<unsigned>(boot_state), esp_err_to_name(boot_state_err));
+  guard_new_image();  // fresh image id resets the counter
+  if (++g_boot_guard.attempts >= 3) {
+      Serial.println("[ota] 3rd consecutive boot without completing setup — rolling back");
+      esp_ota_mark_app_invalid_rollback_and_reboot();  // reboots into the other slot
+  }
   boot_load_config();   // load g_cfg + apply timezone (panel/card tests did the same)
 
   // Normal boot bring-up (Phase 7 wiring). Brightness clamped to 50 % until a
@@ -517,12 +574,13 @@ void setup() {
   xTaskCreatePinnedToCore(task_web,    "web",     8 * 1024, nullptr, 2, nullptr, 0);
   xTaskCreatePinnedToCore(task_net,    "net",     4 * 1024, nullptr, 1, nullptr, 0);
 
-  // T-9.4 — rollback validation, deliberately LAST in setup(): reaching this
-  // line is itself the self-test. Any reset before it (panic, WDT bite,
-  // brownout on a bad image) leaves the slot PENDING_VERIFY, and the next
-  // bootloader pass marks it ABORTED and falls back to the other app slot
-  // (IDF 5.5.5 bootloader_utility.c). esp_ota_get_state_partition /
-  // mark_app_valid_cancel_rollback signatures per app_update esp_ota_ops.h.
+  // T-9.4 — reaching the end of setup() is the image's self-test. Arm the
+  // crash-loop guard counter (armed each boot at the top of setup; disarmed
+  // here). Three consecutive boots without this line mark the running image
+  // INVALID via esp_ota_mark_app_invalid_rollback_and_reboot(), which the
+  // bootloader excludes from selection — the other slot wins. See
+  // NbBootGuard above for why the PENDING_VERIFY state machine is not the
+  // mechanism on this stack (measured 2026-09-20).
   const esp_partition_t* running = esp_ota_get_running_partition();
   const esp_partition_t* configured = esp_ota_get_boot_partition();
   if (running != configured)
@@ -533,6 +591,7 @@ void setup() {
       if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK)
           Serial.printf("[ota] %s confirmed good, rollback cancelled\n", running->label);
   }
+  g_boot_guard.attempts = 0;  // self-test passed
 }
 
 void loop() {

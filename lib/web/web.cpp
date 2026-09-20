@@ -78,18 +78,23 @@ long lclamp(long v, long lo, long hi) { return v < lo ? lo : (v > hi ? hi : v); 
 // arduino-esp32 component (libraries/Update/src/Update.h; verified against
 // that header). begin() picks the inactive app slot, end() verifies the
 // image and only THEN calls esp_ota_set_boot_partition — a corrupt upload
-// can never point the bootloader at garbage. With rollback enabled (it is) the
-// new image boots PENDING_VERIFY and main.cpp's esp_ota_mark_app_valid_cancel_rollback()
-// is reached only if the image survives its own startup — an image that
-// panics pre-validation is marked ABORTED by the next bootloader pass and
-// the other slot wins (verified in bootloader_utility.c /
-// bootloader_common_loader.c of IDF 5.5.5). USB flashing stays fully
-// supported alongside OTA — GPLv3 §6 means owners can always install their
-// own builds by other means.
+// can never point the bootloader at garbage. Rollback is NOT delegated to
+// the PENDING_VERIFY state machine here: on this stack the staged entry
+// reads VALID at boot#1 (measured 2026-09-20), so an image that dies before
+// finishing setup would crash-loop forever. The guard in main.cpp
+// (NbBootGuard) self-marks the image INVALID after three incomplete boots;
+// the bootloader excludes INVALID entries and the other slot wins — verified
+// end-to-end on hardware. USB flashing stays fully supported alongside OTA —
+// GPLv3 §6 means owners can always install their own builds by other means.
 class OtaHandler : public AsyncWebHandler {
   public:
     bool canHandle(AsyncWebServerRequest* request) const override {
-        return request->method() == HTTP_PUT && request->url() == "/api/update";
+        // Namespaced constant ON PURPOSE: bare HTTP_PUT resolves to the global
+        // `enum http_method` in http_parser.h (pulled in by ESPAsyncWebServer's
+        // own includes; value 4, not the 1<<4 the request reports) — it
+        // compiles and never matches (hardware-proven 404).
+        return request->method() == AsyncWebRequestMethod::HTTP_PUT &&
+               request->url() == "/api/update";
     }
     bool isRequestHandlerTrivial() const override { return false; }
 
@@ -98,6 +103,7 @@ class OtaHandler : public AsyncWebHandler {
         if (index == 0) {
             aborted_ = false;
             got_ = 0;
+            Update.abort();  // release any handle left by an aborted upload (stuck until reboot otherwise)
             if (total == 0) {  // no Content-Length — Update.begin wants a size (curl -T sends one)
                 request->send(411, "application/json",
                               "{\"error\":\"Content-Length required (use: curl -T firmware.bin .../api/update)\"}");
