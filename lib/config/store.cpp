@@ -10,6 +10,7 @@
 #ifdef ARDUINO
 
 #include <Preferences.h>
+#include <cstring>
 
 namespace nb {
 namespace config {
@@ -17,6 +18,7 @@ namespace config {
 namespace {
 constexpr char kNs[] = "nb";
 constexpr char kKey[] = "cfg";
+constexpr char kKeyNet[] = "net";  // T-9.2 — credentials live here, not in cfg
 TaskHandle_t s_render = nullptr;
 }  // namespace
 
@@ -52,6 +54,39 @@ bool reset() {
     if (!p.begin(kNs)) return false;
     const bool had = p.getBytesLength(kKey) > 0;
     const bool gone = !had || p.remove(kKey);
+    const bool creds_gone = p.getBytesLength(kKeyNet) == 0 || p.remove(kKeyNet);
+    p.end();
+    return gone && creds_gone;
+}
+
+// T-9.2 — credentials. Separate blob, no logging anywhere in this path.
+
+bool load_creds(Creds& out) {
+    Preferences p;
+    if (!p.begin(kNs)) return false;
+    const size_t len = p.getBytesLength(kKeyNet);
+    const bool ok = len == sizeof(Creds) &&
+                    p.getBytes(kKeyNet, &out, sizeof(out)) == sizeof(Creds) &&
+                    creds_valid(out);
+    p.end();
+    if (!ok) std::memset(&out, 0, sizeof(out));
+    return ok;
+}
+
+bool save_creds(const Creds& c) {
+    if (!creds_valid(c)) return false;
+    Preferences p;
+    if (!p.begin(kNs)) return false;
+    const size_t put = p.putBytes(kKeyNet, &c, sizeof(c));
+    p.end();
+    return put == sizeof(c);
+}
+
+bool clear_creds() {
+    Preferences p;
+    if (!p.begin(kNs)) return false;
+    const bool had = p.getBytesLength(kKeyNet) > 0;
+    const bool gone = !had || p.remove(kKeyNet);
     p.end();
     return gone;
 }

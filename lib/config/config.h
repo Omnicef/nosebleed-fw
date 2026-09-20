@@ -112,6 +112,22 @@ struct Config {
     Favorite favorites[kMaxFavorites];
 };
 
+// T-9.2 — WiFi credentials. A SEPARATE NVS blob ("net"), never part of
+// Config: nothing that serialises or GETs the config can return a
+// password by construction. Fixed-size POD, IEEE 802.11 lengths
+// (SSID 1–32, WPA passphrase 0 or 8–63). Device-only access; host code
+// may validate but never logs these.
+struct Creds {
+    char ssid[33];
+    char pass[65];
+};
+
+// 802.11 length bounds + no control characters. Pure — shared by the
+// provisioning handler and any test. The reason the character guard is
+// explicit: a form POST percent-decodes, so "%0A" can arrive as a real
+// newline and would desync anything that prints the value.
+bool creds_valid(const Creds& c);
+
 // The nvs partition is 0x5000 (20 KB) after the T-1.2 overlap fix and NVS
 // blobs are size-capped well below that; keep the whole store under 4 KB
 // (PLAN T-4.1 accept).

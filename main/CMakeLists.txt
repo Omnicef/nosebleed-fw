@@ -39,6 +39,7 @@ file(GLOB nb_lib_srcs
     "${CMAKE_CURRENT_LIST_DIR}/../lib/render/*.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../lib/data/*.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../lib/config/*.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../lib/net/*.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../lib/panel/*.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../lib/web/*.cpp"
 )
@@ -50,6 +51,7 @@ idf_component_register(
         "${CMAKE_CURRENT_LIST_DIR}/../lib/render"
         "${CMAKE_CURRENT_LIST_DIR}/../lib/data"
         "${CMAKE_CURRENT_LIST_DIR}/../lib/config"
+        "${CMAKE_CURRENT_LIST_DIR}/../lib/net"
         "${CMAKE_CURRENT_LIST_DIR}/../lib/logos"
         "${CMAKE_CURRENT_LIST_DIR}/../lib/panel"
         "${CMAKE_CURRENT_LIST_DIR}/../lib/web"

@@ -29,7 +29,18 @@ bool save(const Config& c);
 
 // Drop the blob so the next load() seeds defaults (factory-reset hook,
 // T-9.6). true = NVS reachable (blob absent afterwards either way).
+// Also clears the credentials blob — a factory reset returns to
+// first-boot provisioning (T-9.2).
 bool reset();
+
+// T-9.2 — WiFi credentials: separate blob ("net"), deliberately NOT
+// part of Config so no config GET/serialisation path can echo a
+// password. false = absent, corrupt or schema-invalid; callers must
+// then fall back (T-9.2: compile-time secrets) or provision (T-9.1).
+// Nothing here logs the values; do not add logging at call sites.
+bool load_creds(Creds& out);
+bool save_creds(const Creds& c);
+bool clear_creds();
 
 #ifdef ARDUINO
 // The render task registers itself here at startup; every successful

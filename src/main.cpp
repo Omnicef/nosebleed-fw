@@ -43,6 +43,7 @@ static void heartbeat(const char* name) {
 #include "game.h"
 #include "local_time.h"
 #include "logos_esp.h"
+#include "net.h"
 #include "panel.h"
 #include "poll.h"
 #include "scoreboard_widget.h"
@@ -208,10 +209,21 @@ static int render_dwell_s() {
     return 5;
 }
 
-// T-8.6: POST /api/system/show-ip arms an 8 s scrolling-IP splash on the
+// T-8.6: POST /api/system/show-ip arms an 8 s scrolling splash on the
 // render task (the panel is render's property — the web side only flags it).
+// T-9.1: the splash is now message-driven — the net task arms the AP SSID
+// ("join this network") and the new IP after provisioning. Text is written
+// before the deadline store (release/acquire pair); render rebuilds the
+// canvas only when the deadline value changes.
 static std::atomic<uint32_t> g_ip_deadline{0};
-static void web_show_ip() { g_ip_deadline.store(millis() + 8000); }
+static char g_splash_msg[48] = "";
+static void arm_splash(const char* msg) {
+    snprintf(g_splash_msg, sizeof(g_splash_msg), "%s", msg);
+    uint32_t dl = millis() + 8000;
+    if (dl == 0) dl = 1;  // 0 means "no splash"
+    g_ip_deadline.store(dl, std::memory_order_release);
+}
+static void web_show_ip() { arm_splash(WiFi.localIP().toString().c_str()); }
 
 static void task_render(void*) {
     nb::config::bind_render_task(xTaskGetCurrentTaskHandle());
@@ -243,7 +255,7 @@ static void task_render(void*) {
         const uint32_t t_busy = millis();
         // T-8.6 show-ip splash: 8 s scrolling IP, replacing the strip for the
         // window (wrap-safe deadline math). Built once per trigger.
-        const uint32_t ipdl = g_ip_deadline.load(std::memory_order_relaxed);
+        const uint32_t ipdl = g_ip_deadline.load(std::memory_order_acquire);
         if (ipdl != 0 && static_cast<int32_t>(ipdl - millis()) <= 0)
             g_ip_deadline.store(0, std::memory_order_relaxed);
         bool ip_shown = false;
@@ -254,12 +266,12 @@ static void task_render(void*) {
             static uint32_t ip_t = 0;
             if (ip_dl_built != ipdl) {
                 nb::canvas_free(ip_c);
-                const String ip = WiFi.localIP().toString();
-                const int tw = nb::text_width(nb::FONT_SPLEEN_6X12, static_cast<int>(ip.length()));
+                const int tw = nb::text_width(nb::FONT_SPLEEN_6X12,
+                                              static_cast<int>(strlen(g_splash_msg)));
                 ip_c = nb::canvas_alloc(static_cast<uint16_t>(tw + pw), static_cast<uint16_t>(ph));
                 if (ip_c.valid())
                     nb::draw_text_outlined(ip_c, nb::FONT_SPLEEN_6X12, pw,
-                                             (ph - nb::FONT_SPLEEN_6X12.box_h) / 2, ip.c_str(),
+                                             (ph - nb::FONT_SPLEEN_6X12.box_h) / 2, g_splash_msg,
                                              nb::rgb565(255, 196, 0), 0);
                 ip_dl_built = ipdl;
                 ip_scroll = 0;
@@ -396,11 +408,12 @@ static void task_poll(void*) {
 }
 
 static void task_web(void*) {
-  while (WiFi.status() != WL_CONNECTED) {
+  while (!nb::net::link_ready()) {  // STA up or provisioning AP up (T-9.1)
     heartbeat("web");
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
-  Serial.printf("[web] wifi %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[web] up (%s)\n",
+                nb::net::ap_active() ? nb::net::ap_ssid() : WiFi.localIP().toString().c_str());
   if (!nb::web::init()) Serial.println("[web] init FAILED");
   for (;;) {
     heartbeat("web");
@@ -410,22 +423,27 @@ static void task_web(void*) {
 
 static void task_net(void*) {
     bool sntp = false;
+    uint32_t hb = millis();
+    nb::net::init();
     for (;;) {
-        if (WiFi.status() != WL_CONNECTED) {
-            if (WIFI_SSID[0] != '\0') {
-                WiFi.begin(WIFI_SSID, WIFI_PASS);
-                for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; ++i)
-                    vTaskDelay(pdMS_TO_TICKS(250));
-            }
-            if (WiFi.status() != WL_CONNECTED) vTaskDelay(pdMS_TO_TICKS(30000));  // ponytail: fixed retry, exponential if routers ever flake
-        } else {
-            if (!sntp) {
+        nb::net::tick();
+        if (nb::net::take_edge_up()) {
+            if (!sntp) {  // SNTP before any TLS (AGENTS boot-order rule)
                 configTime(0, 0, "pool.ntp.org", "time.nist.gov");
                 sntp = true;
-                Serial.printf("[net] wifi %s\n", WiFi.localIP().toString().c_str());
             }
-            vTaskDelay(pdMS_TO_TICKS(5000));
+            const String ip = WiFi.localIP().toString();
+            Serial.printf("[net] wifi %s\n", ip.c_str());
+            arm_splash(ip.c_str());  // the footer of onboard.html promises this address
         }
+        if (nb::net::take_edge_ap_up()) {
+            Serial.printf("[net] AP %s open — join it to provision wifi\n", nb::net::ap_ssid());
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Join AP \"%s\" to wifi-provision", nb::net::ap_ssid());
+            arm_splash(msg);  // T-9.1: a headless device names the network it wants joined
+        }
+        if (millis() - hb >= 30000) { heartbeat("net"); hb = millis(); }
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 

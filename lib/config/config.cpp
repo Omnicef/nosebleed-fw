@@ -44,6 +44,25 @@ bool validate(const Config& c) {
            c.favorite_count <= kMaxFavorites;
 }
 
+// T-9.2 — SSID 1–32, printable, no control chars (percent-decoded form
+// fields can smuggle %0A through a length-only check and then desync any
+// printf); passphrase empty (open) or 8–63 printable.
+bool creds_valid(const Creds& c) {
+    size_t sl = 0, pl = 0;
+    while (sl < sizeof(c.ssid) && c.ssid[sl] != '\0') ++sl;
+    while (pl < sizeof(c.pass) && c.pass[pl] != '\0') ++pl;
+    if (sl == 0 || sl >= sizeof(c.ssid)) return false;  // empty / unterminated
+    if (pl >= sizeof(c.pass)) return false;             // unterminated
+    if (pl != 0 && pl < 8) return false;
+    for (size_t i = 0; i < sl; ++i)
+        if (static_cast<unsigned char>(c.ssid[i]) < 32 || static_cast<unsigned char>(c.ssid[i]) == 127)
+            return false;
+    for (size_t i = 0; i < pl; ++i)
+        if (static_cast<unsigned char>(c.pass[i]) < 32 || static_cast<unsigned char>(c.pass[i]) == 127)
+            return false;
+    return true;
+}
+
 void set_defaults(Config& c) {
     std::memset(&c, 0, sizeof(c));
     c.magic = kMagic;
