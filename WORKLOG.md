@@ -1347,3 +1347,61 @@ source, logged at boot for runtime confirmation.
 re-measure, data-cache runtime log, 53 KB → ~39 KB confirmation, and the two
 open items (static-mode flicker capture, T-9.1/T-9.2 provisioning). Wokwi
 heap-half of the TLS re-measure needs `WOKWI_CLI_TOKEN` — not set this session.
+
+## T-9.1 + T-9.2 — SoftAP provisioning + NVS credentials (2026-09-19)
+
+Built: `Creds` + validation and a separate NVS blob (ns `nb`, key `net` — never
+inside the `Config` blob, so no GET path can carry a password); `lib/net/net.{h,cpp}`
+supervision state machine (assoc window 10 s, backoff 1 s→30 s cap, ≥3 failures →
+open SoftAP `nosebleed-<last-3-MAC-bytes>` + captive DNSServer, saved creds beat the
+`secrets.h` built-in, re-probe every 5 min while the AP idles with no station,
+dirty-reload on `/api/net/connect`); main.cpp task_net/edge wiring with AP-SSID and
+IP splashes; web: `POST /api/net/connect` (values never logged, no GET counterpart)
+and a captive `onNotFound` 302 → `/onboard` while the AP owns the radio.
+
+**Acceptance, all on hardware:** erased-NVS boot → `[net] wifi target: none
+(provisioning)` + AP up + `[web] up (nosebleed-7A8F20)`; host joined it;
+`dig test.example.com @192.168.4.1` → 192.168.4.1 (captive DNS);
+`curl -H "Host: connectivitycheck.gstatic.com" http://192.168.4.1/generate_204` →
+302 → `/onboard`; GET `/onboard` byte-identical to `assets/web/onboard.html`
+(gz-served); `POST /api/net/connect` → `{"ok":true,"ssid":"HomeAuto"}` → board left
+AP, joined the network, AP down; chip reset → `[net] wifi target: saved
+credentials` → up in 1 s (persistence, and saved-beats-built-in proven);
+creds-cleared boot → `[net] wifi target: built-in (secrets.h)` → connect; POST
+while linked → `[net] creds changed, restarting link` → reconnect inside 3 s;
+password string absent from every serial capture of the battery and from all four
+GET API payloads. Backoff→AP fallback proven live (bogus creds → attempts
+1..3 logged → `AP nosebleed-7A8F20 open`).
+
+**Five bugs, all found by running it, none visible in review:**
+1. `__has_include("secrets.h")` is per-TU — net.cpp never saw the built-in
+   credentials until it included the header itself.
+2. `tick()` returned early while LINKED — the dirty flag was never seen, so a
+   POST to a *connected* board saved creds and silently did nothing. (The first
+   AP-mode test hid this: the board wasn't linked.)
+3. The AP reprobe gate `softAPgetStationNum()==0` also gated the user's own
+   submission — and the provisioner is by definition the attached station.
+   One-shot `s_force` bypass for POSTs; the gate stays for unattended reprobes.
+4. 30 s reprobe cadence scan-stormed the radio: the AP SSID went undetectable
+   during probes (nmcli confirmed misses). Re-probe → 5 min.
+5. `PUT /api/settings` blew the `async_tcp` stack canary (panic +
+   reboot, decoded backtrace → `handle_settings_put`, web.cpp:80): two ~4 KB
+   `Config` PODs on the 8 KB default `async_tcp` stack under the middleware
+   chain — handlers have no executor hook in ESPAsyncWebServer v3. Dropped the
+   full-Config copy (only `.hw` is compared) and raised
+   `CONFIG_ASYNC_TCP_STACK_SIZE=12288`. Note the IDF trap this exposed:
+   `sdkconfig.defaults` does not override an existing `sdkconfig` key — the
+   value only landed after editing `build/sdkconfig`; new symbols ride on fresh
+   sdkconfigs or manual edits.
+
+**Environment, not firmware:** for ~1 h the board's link went on-paper-dead
+(status CONNECTED, ARP alive, ~92 % ping loss, TLS `getaddrinfo` 202 /
+`-0x7280` mid-stream). A git-stash control build of the *pre-provisioning* net
+loop reproduced it identically, so the new state machine is exonerated; it was
+RF/peer degradation on the test SSID (which itself has two APs). The residual
+weakness is real and predates this phase: both old and new supervision key
+exclusively on `WiFi.status()`, which can persist on a dead data path — logged
+as PLAN §4a D-5.
+
+User config wiped by the acceptance erases was restored via the API
+(static, brightness 40, nfl/nhl/mlb) and verified across a reboot.

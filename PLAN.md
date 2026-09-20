@@ -698,6 +698,24 @@ the pair of `E` lines is expected and harmless.
 
 ---
 
+### D-5 — `WiFi.status()` can stay CONNECTED on a dead data path (zombie link)
+
+Observed 2026-09-19 for ~1 h on the test network: association held (status
+CONNECTED, correct IP, ARP entry alive, RSSI reported) while the data path was
+~92 % dead — pings mostly lost, TLS failing with `getaddrinfo` 202 mid-attempt and
+`mbedtls -0x7280` mid-stream, `[poll] ok=0`. Neither supervision loop can heal it:
+the pre-T-9.x loop and `lib/net/net.cpp` both key retries exclusively on
+`WiFi.status() != WL_CONNECTED`, which never leaves that state while the peer keeps
+the association. A control build from `HEAD` (pre-provisioning net loop) reproduced
+it identically, so this predates T-9.1/9.2 — it is not a provisioning regression.
+
+Not fixed with the obvious sledgehammer: a ping-watchdog that force-reconnects can
+amplify a genuine RF outage into an AP/storm flap. Candidate fix is a liveness
+signal from the consumers that already fail on it (poll's consecutive-fetch failures
+→ `nb::net::force_reconnect()`, which reuses the dirty path) — needs care to stay
+below the backoff cadence.
+
+
 ## §5 Risk register
 
 | Risk | Phase | Severity | Mitigation |

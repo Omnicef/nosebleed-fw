@@ -19,6 +19,7 @@
 #include "../config/config.h"
 #include "../config/store.h"
 #include "../data/espn.h"
+#include "../net/net.h"
 #include "../render/scroll.h"
 #include "bmp.h"
 
@@ -76,9 +77,10 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
         request->send(400, "application/json", "{\"error\":\"expected a JSON object\"}");
         return;
     }
-    config::Config c, old;
+    config::Config c;
     config::load(c);
-    old = c;
+    const config::HardwareSetting old_hw = c.hw;  // only .hw is compared; a full Config copy
+                                                  // blew the async_tcp stack canary (2026-09-19)
     if (json["brightness"].is<long>()) c.hw.brightness = static_cast<uint8_t>(lclamp(json["brightness"], 0, 100));
     if (json["rows"].is<long>()) c.hw.rows = static_cast<uint16_t>(lclamp(json["rows"], 1, 512));
     if (json["cols"].is<long>()) c.hw.cols = static_cast<uint16_t>(lclamp(json["cols"], 1, 512));
@@ -101,7 +103,7 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
         c.hw.card_gap = static_cast<uint8_t>(lclamp(json["card_gap"], 0, 32));
     if (json["clock_24h"].is<bool>()) c.hw.clock_24h = json["clock_24h"].as<bool>() ? 1 : 0;
 
-    const bool structural = config::hw_structural_changed(old.hw, c.hw);
+    const bool structural = config::hw_structural_changed(old_hw, c.hw);
     if (!config::save(c)) {
         request->send(500, "application/json", "{\"error\":\"config save failed\"}");
         return;
@@ -589,6 +591,44 @@ bool init() {
                 d["ok"] = true;
                 send_json(request, 200, d);
             });
+
+    // T-9.1 — provisioning POST: onboard.html's form target (urlencoded
+    // ssid/pass; the server parses plain POST bodies into arg()). There
+    // is deliberately NO GET counterpart and nothing here logs a value —
+    // credentials exist only in the separate NVS blob (T-9.2). On accept,
+    // nudge the net task to drop its backoff and try the new network.
+    srv->on(AsyncURIMatcher::exact("/api/net/connect"), AsyncWebRequestMethod::HTTP_POST,
+            [](AsyncWebServerRequest* request) {
+                nb::config::Creds c = {};
+                strlcpy(c.ssid, request->arg("ssid").c_str(), sizeof(c.ssid));
+                strlcpy(c.pass, request->arg("pass").c_str(), sizeof(c.pass));
+                JsonDocument d;
+                if (!nb::config::save_creds(c)) {  // save validates (lengths + no control chars)
+                    d["ok"] = false;
+                    d["error"] = "ssid/password rejected or storage write failed";
+                    send_json(request, 400, d);
+                    return;
+                }
+                nb::net::request_reconnect();
+                d["ok"] = true;
+                d["ssid"] = request->arg("ssid");  // echoing the network name is fine — just submitted
+                send_json(request, 200, d);
+            });
+
+    // T-9.1 — captive-portal capture. While the provisioning AP is up,
+    // every unknown path — the phone's connectivity probes
+    // (generate_204, hotspot-detect.html, …) included — 302s to the
+    // onboarding page so the portal opens itself. Outside AP mode, plain
+    // 404 as before: the SPA keeps its not-found behaviour.
+    srv->onNotFound([](AsyncWebServerRequest* request) {
+        if (nb::net::ap_active()) {
+            AsyncWebServerResponse* r = request->beginResponse(302, "text/plain", "");
+            r->addHeader("Location", String("http://") + nb::net::ap_ip() + "/onboard");
+            request->send(r);
+        } else {
+            request->send(404);
+        }
+    });
 
     const uint32_t f3 = internal_free();
     const uint32_t l3 = internal_largest();

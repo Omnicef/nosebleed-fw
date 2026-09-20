@@ -4715,3 +4715,9 @@ CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 # exist in component mode. With n it takes the esp_lcd/driver path and exports
 # NO_GFX itself — the build configuration proven since T-0.2/T-2.8.
 CONFIG_ESP32_HUB75_USE_GFX=n
+
+# --- ESPAsyncWebServer handler stack. Handlers run on the async_tcp task
+# (no executor hook in v3), and handle_settings_put's 4 KB Config copy under
+# the middleware call chain tripped its stack canary at the 8192 default
+# (hardware-proven 2026-09-19). 12 KB covers the heaviest handler with margin.
+CONFIG_ASYNC_TCP_STACK_SIZE=12288
