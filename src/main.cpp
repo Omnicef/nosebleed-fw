@@ -46,6 +46,7 @@ static void heartbeat(const char* name) {
 #include "game.h"
 #include "local_time.h"
 #include "logos_esp.h"
+#include "logos_ota.h"
 #include "net.h"
 #include "panel.h"
 #include "poll.h"
@@ -417,6 +418,16 @@ static void task_poll(void*) {
                           static_cast<unsigned>(wire));
         }
         const int64_t now2 = time(nullptr);
+        // T-9.5: logo atlas OTA — boot + daily, or on demand from
+        // /api/logos/update. Runs here so fetches stay single-session.
+        static int64_t last_logos = 0;
+        if (now2 > 1700000000 && (nb::logos::ota::requested().exchange(false) ||
+                                  last_logos == 0 || now2 - last_logos >= 86400)) {
+            last_logos = now2;
+            const int r = nb::logos::ota::check();
+            Serial.printf("[logos] ota %d\n", r);
+            if (r == 1) g_strip_key = 0;  // new art ⇒ rebuild
+        }
         boot_order_producers(pc);  // T-8.5: carousel order/enabled apply on this pass
         boot_apply_favorites(pc);  // T-8.4: /api/favorites applies on this pass
         nb::render::CardProducer* ps[kLeagueSlugCount + 1];

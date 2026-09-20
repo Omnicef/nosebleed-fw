@@ -20,6 +20,7 @@
 #include "../config/config.h"
 #include "../config/store.h"
 #include "../data/espn.h"
+#include "../logos/logos_ota.h"
 #include "../net/net.h"
 #include "../render/scroll.h"
 #include "bmp.h"
@@ -705,6 +706,32 @@ bool init() {
 
     // T-9.4 — firmware OTA upload target.
     srv->addHandler(&g_ota);
+
+    // T-9.5 — logo atlas update: store the URL (https only, so atlas bytes
+    // ride the same TLS discipline as everything else), drop the stale
+    // ETag, and flag the poll task to run the check on its next pass
+    // (single TLS-session rule keeps the fetch out of this task).
+    srv->on(AsyncURIMatcher::exact("/api/logos/update"), AsyncWebRequestMethod::HTTP_POST,
+            [](AsyncWebServerRequest* request) {
+                JsonDocument d;
+                const String url = request->arg("url");
+                if (url.length() == 0 || url.length() > 255 ||
+                    !url.startsWith("https://")) {
+                    d["ok"] = false;
+                    d["error"] = "https url arg required";
+                    send_json(request, 400, d);
+                    return;
+                }
+                if (!nb::logos::ota::set_url(url.c_str())) {
+                    d["ok"] = false;
+                    d["error"] = "NVS write failed";
+                    send_json(request, 500, d);
+                    return;
+                }
+                d["ok"] = true;
+                d["scheduled"] = true;
+                send_json(request, 200, d);
+            });
 
     // T-9.1 — provisioning POST: onboard.html's form target (urlencoded
     // ssid/pass; the server parses plain POST bodies into arg()). There

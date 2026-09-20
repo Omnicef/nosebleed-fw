@@ -20,6 +20,7 @@
 #pragma once
 
 #include <cstddef>
+#include <strings.h>
 
 #include <Arduino.h>
 #include "esp_http_client.h"
@@ -58,22 +59,41 @@ class HttpStream : public Stream {
 struct HttpStat {
     int status = 0;          // HTTP status, 0 = never got one
     int64_t clen = -1;       // Content-Length, -1 = absent (header signature: int64_t)
+    char etag[96] = {};      // response ETag if present (T-9.5; GitHub's is
+                               // a quoted 64-hex sha256 — 66 chars)
 };
 
+// Captures the response ETag (HTTP_EVENT_ON_HEADER fires per header; the
+// key/value fields are documented in esp_http_client.h). Harmless on the
+// ESPN path — the ESPN client never reads it back.
+inline esp_err_t http_etag_cb(esp_http_client_event_t* evt) {
+    if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->user_data && evt->header_key &&
+        evt->header_value && strcasecmp(evt->header_key, "ETag") == 0) {
+        HttpStat* s = static_cast<HttpStat*>(evt->user_data);
+        strlcpy(s->etag, evt->header_value, sizeof(s->etag));
+    }
+    return ESP_OK;
+}
+
 // One GET attempt. On HTTP 200, fn(HttpStream&) reads the body; its return
-// value is this call's success. Always cleans up exactly once.
+// value is this call's success. Always cleans up exactly once. An optional
+// extra request header (If-None-Match for T-9.5) is set when key != nullptr.
 template <typename Fn>
-bool http_get_once(const char* url, Fn fn, HttpStat* stat = nullptr) {
+bool http_get_once(const char* url, Fn fn, HttpStat* stat = nullptr,
+                   const char* hdr_key = nullptr, const char* hdr_val = nullptr) {
+    HttpStat local;
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.user_agent = "python-requests/2.31";  // Akamai UA allowlist (T-0.4)
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
     cfg.timeout_ms = 15000;
     cfg.buffer_size = 1024;
+    cfg.event_handler = http_etag_cb;
+    cfg.user_data = &local;
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) return false;
     esp_http_client_set_header(c, "Accept-Encoding", "identity");
-    HttpStat local;
+    if (hdr_key) esp_http_client_set_header(c, hdr_key, hdr_val);
     bool ok = false;
     do {
         if (esp_http_client_open(c, 0) != ESP_OK) break;
