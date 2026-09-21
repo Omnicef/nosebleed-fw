@@ -39,6 +39,7 @@ static void heartbeat(const char* name) {
 #include "esp_app_format.h"  // esp_app_desc_t (boot-guard image id)
 #include "cache.h"
 #include "clock_widget.h"
+#include "ticker_widget.h"
 #include "weather_widget.h"
 #include "date_window.h"
 #include "espn.h"
@@ -78,6 +79,7 @@ static nb::render::StripBuilder g_builder;  // writer: poll task only
 static nb::render::ClockWidget* g_clock = nullptr;
 static nb::render::ScoreboardWidget* g_sb[kLeagueSlugCount] = {};
 static nb::render::WeatherWidget* g_weather = nullptr;
+static nb::render::TickerWidget* g_tk[3] = {};  // info_src order: news, stocks, crypto
 static bool g_wen[nb::config::kMaxWidgets] = {};  // stable enabled flags for widgets[]
 static uint32_t g_strip_key = 0;
 
@@ -130,6 +132,12 @@ static void boot_create_producers() {
                                                             nb::render::system_local_time, nullptr);
         } else if (std::strcmp(w.type, "weather") == 0 && g_weather == nullptr) {
             g_weather = new nb::render::WeatherWidget(&g_info, &g_wen[i]);
+        } else {  // T-10.4 — news / stocks / crypto, all one class
+            const int tk = std::strcmp(w.type, "news") == 0     ? 0
+                           : std::strcmp(w.type, "stocks") == 0 ? 1
+                           : std::strcmp(w.type, "crypto") == 0 ? 2 : -1;
+            if (tk >= 0 && g_tk[tk] == nullptr)
+                g_tk[tk] = new nb::render::TickerWidget(&g_info, tk, w.type, &g_wen[i]);
         }
     }
 }
@@ -159,6 +167,11 @@ static void boot_order_producers(const nb::config::Config& cfg) {
             if (lg >= 0 && g_sb[lg] != nullptr) g_prod[out++] = g_sb[lg];
         } else if (std::strcmp(w.type, "weather") == 0 && g_weather != nullptr) {
             g_prod[out++] = g_weather;
+        } else {  // T-10.4 — same three types, same order of precedence
+            const int tk = std::strcmp(w.type, "news") == 0     ? 0
+                           : std::strcmp(w.type, "stocks") == 0 ? 1
+                           : std::strcmp(w.type, "crypto") == 0 ? 2 : -1;
+            if (tk >= 0 && g_tk[tk] != nullptr) g_prod[out++] = g_tk[tk];
         }
     }
     g_prod_n = out;

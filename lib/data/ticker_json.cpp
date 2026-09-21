@@ -41,7 +41,7 @@ bool in_set(char c, const char* set) {
 // "81268" -> "81,268" into dst (cap >= 13 covers the 9-digit cap).
 void fmt_price(char* dst, size_t cap, double v) {
     if (v >= 1000.0) {
-        char raw[13];  // 12 digits = $999B cap; bigger is display-garbage anyway
+        char raw[12];  // 11 digits: leaves room for the caller's '$' prefix
         snprintf(raw, sizeof raw, "%.0f", v);
         const size_t n = strlen(raw), commas = n > 1 ? (n - 1) / 3 : 0;
         if (n + commas + 1 > cap) {  // tiny cap: plain digits still display
@@ -122,7 +122,8 @@ bool to_coins(JsonVariantConst root, const char* ids, TickerList& out) {
         if (!usd.is<double>() && !usd.is<int64_t>() && !usd.is<int32_t>()) continue;
         TickerItem& it = out.items[out.count];
         copy_str(it.label, sizeof it.label, tok);
-        fmt_price(it.l1, sizeof it.l1, usd.as<double>());
+        it.l1[0] = '$';  // crypto is USD-quoted
+        fmt_price(it.l1 + 1, sizeof it.l1 - 1, usd.as<double>());
         const JsonVariantConst d = root[tok]["usd_24h_change"];
         if (d.is<double>()) {
             snprintf(it.l2, sizeof it.l2, "%+.1f%%", d.as<double>());

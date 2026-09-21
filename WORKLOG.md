@@ -1657,3 +1657,19 @@ re-verified the day a key goes in.
 * 42/42 native (new: live CoinGecko decode incl. comma format + micro-cap,
   doc-shape news wrap/finnhub fallback + c:0 reject, 12 URL-guard cases,
   key charset, slot isolation); purity OK; firmware green.
+
+## T-10.4 — tickers as CardProducers
+
+One class, three instances (`news`/`stocks`/`crypto`), one card per item:
+three centred spleen-5x8 lines (label gray / value white / delta green-red
+by leading sign) at y=1/12/22 — exactly the 12-glyph strings the decoder
+emits. Crypto prices gained the `$` prefix in the decoder (offset into
+`l1`, keeping gcc's format-truncation audit happy). Zero engine changes:
+`compose_cards`/`order_producers`/strip key already treat any
+CardProducer uniformly, which *is* the acceptance criterion — the only
+main.cpp diff is create/order branches beside clock and weather.
+`cards_key` hashes every drawn field (label+l1+l2 of every item) — the
+D-1 frozen-clock trap re-armed on purpose: the host test fails if a pure
+value tick doesn't move the key. Golden: `gen_ticker_golden.py` /
+`golden_ticker.h`, byte-identical first run. 43/43 native; purity OK;
+firmware green.

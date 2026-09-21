@@ -45,6 +45,7 @@
 #include "golden_game_pre.h"
 #include "golden_game_situation.h"
 #include "golden_logo.h"
+#include "golden_ticker.h"
 #include "golden_weather.h"
 #include "logo.h"
 #include "logos.h"
@@ -53,6 +54,7 @@
 #include "scoreboard_widget.h"
 #include "scroll.h"
 #include "strip.h"
+#include "ticker_widget.h"
 #include "weather_widget.h"
 
 using namespace nb;
@@ -1440,10 +1442,10 @@ static void test_ticker_decoders(void) {
     TEST_ASSERT_TRUE(to_coins(coin, "bitcoin,ethereum,pepe", tl));
     TEST_ASSERT_EQUAL_INT(3, tl.count);
     TEST_ASSERT_EQUAL_STRING("bitcoin", tl.items[0].label);
-    TEST_ASSERT_EQUAL_STRING("81,268", tl.items[0].l1);
+    TEST_ASSERT_EQUAL_STRING("$81,268", tl.items[0].l1);
     TEST_ASSERT_EQUAL_STRING("+1.1%", tl.items[0].l2);
-    TEST_ASSERT_EQUAL_STRING("2,660", tl.items[1].l1);  // >=1000 rounds to whole units
-    TEST_ASSERT_EQUAL_STRING("4e-06", tl.items[2].l1);
+    TEST_ASSERT_EQUAL_STRING("$2,660", tl.items[1].l1);  // >=1000 rounds to whole units
+    TEST_ASSERT_EQUAL_STRING("$4e-06", tl.items[2].l1);
     TEST_ASSERT_TRUE(to_coins(coin, "ethereum,nonexistent-xyz", tl));  // missing id skipped
     TEST_ASSERT_EQUAL_INT(1, tl.count);
     TEST_ASSERT_FALSE(to_coins(coin, "nope,nada", tl));  // nothing parsed -> last-good
@@ -1573,6 +1575,72 @@ static void test_weather_widget(void) {
     Canvas16 d = canvas_alloc(render::CARD_W, GOLDEN_WEATHER_H);
     TEST_ASSERT_EQUAL_INT(0, widget.cards(&d, 1, 2000));
     canvas_free(d);
+}
+
+// T-10.4 — ticker card: golden parity for one crypto item, plus the D-1
+// lesson re-armed (a value tick alone MUST move the key), N-cards-for-N-
+// items, max_cards clamp, disabled gate.
+static void test_ticker_widget(void) {
+    using namespace nb::data;
+    nb::data::InfoCache cache;
+    bool enabled = true;
+    render::TickerWidget widget(&cache, 2, "crypto", &enabled);
+    TEST_ASSERT_EQUAL_STRING("crypto", widget.id());
+    TEST_ASSERT_FALSE(widget.is_visible(0));
+
+    auto set_item = [](TickerItem& it, const char* a, const char* b, const char* c) {
+        copy_str(it.label, sizeof it.label, a);
+        copy_str(it.l1, sizeof it.l1, b);
+        copy_str(it.l2, sizeof it.l2, c);
+    };
+    TickerList* w = cache.writable_ticker(2);
+    w->count = 3;
+    set_item(w->items[0], "bitcoin", "$81,268", "+1.1%");
+    set_item(w->items[1], "ethereum", "$2,660", "-0.9%");
+    set_item(w->items[2], "solana", "$146.20", "+3.4%");
+    cache.publish_ticker(2, 1000);
+
+    TEST_ASSERT_TRUE(widget.is_visible(1000));
+    const uint32_t key = widget.cards_key(1000);
+    TEST_ASSERT_EQUAL_UINT32(key, widget.cards_key(2000));
+
+    Canvas16 cards[4];
+    for (Canvas16& c : cards) {
+        c = canvas_alloc(render::CARD_W, GOLDEN_TICKER_H);
+        TEST_ASSERT_TRUE(c.valid());
+    }
+    TEST_ASSERT_EQUAL_INT(3, widget.cards(cards, 4, 1000));
+    for (int i = 0; i < 3; ++i) TEST_ASSERT_TRUE(canvas_has_ink(cards[i]));
+    TEST_ASSERT_EQUAL_INT(1, widget.cards(cards, 1, 1000));  // clamp to slots
+
+    int diffs = 0, first = -1;
+    for (int i = 0; i < GOLDEN_TICKER_W * GOLDEN_TICKER_H; ++i) {
+        if (cards[0].px[i] != GOLDEN_TICKER[i]) {
+            if (first < 0) first = i;
+            ++diffs;
+        }
+    }
+    uint8_t rgb[GOLDEN_TICKER_W * GOLDEN_TICKER_H * 3];
+    expand_to_rgb(cards[0], rgb);
+    TEST_ASSERT_TRUE(write_png_rgb("test/out/ticker_fw.png", GOLDEN_TICKER_W, GOLDEN_TICKER_H, rgb));
+    char msg[96];
+    std::snprintf(msg, sizeof msg, "ticker parity: %d px differ (first @x=%d y=%d)", diffs,
+                  first % GOLDEN_TICKER_W, first / GOLDEN_TICKER_H);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, msg);
+
+    w = cache.writable_ticker(2);  // D-1 lesson: a value tick MUST move the key
+    w->count = 3;
+    set_item(w->items[0], "bitcoin", "$81,300", "+1.1%");
+    set_item(w->items[1], "ethereum", "$2,660", "-0.9%");
+    set_item(w->items[2], "solana", "$146.20", "+3.4%");
+    cache.publish_ticker(2, 2000);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(key, widget.cards_key(2000),
+                                  "price tick did not change cards_key (frozen ticker)");
+
+    enabled = false;
+    TEST_ASSERT_FALSE(widget.is_visible(2000));
+    TEST_ASSERT_EQUAL_INT(0, widget.cards(cards, 4, 2000));
+    for (Canvas16& c : cards) canvas_free(c);
 }
 
 static void test_scoreboard_widget(void) {
@@ -1979,6 +2047,7 @@ int main(void) {
     RUN_TEST(test_info_cache_weather);
     RUN_TEST(test_weather_widget);
     RUN_TEST(test_ticker_decoders);
+    RUN_TEST(test_ticker_widget);
     RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
     RUN_TEST(test_compute_pages);
