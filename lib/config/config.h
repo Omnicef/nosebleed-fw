@@ -167,6 +167,12 @@ struct ApiKeys {
 
 bool api_keys_valid(const ApiKeys& k);
 
+// T-10.5 — quiet-hours window test, pure so the host pins it. m/start/end
+// are minutes past local midnight. [start, end); end <= start wraps past
+// midnight (end == start ⇒ the whole day). The caller checks
+// quiet_enabled; this answers only "inside the window?".
+bool quiet_active(int m, int start, int end);
+
 // The nvs partition is 0x5000 (20 KB) after the T-1.2 overlap fix and NVS
 // blobs are size-capped well below that; keep the whole store under 4 KB
 // (PLAN T-4.1 accept).

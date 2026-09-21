@@ -1673,3 +1673,21 @@ D-1 frozen-clock trap re-armed on purpose: the host test fails if a pure
 value tick doesn't move the key. Golden: `gen_ticker_golden.py` /
 `golden_ticker.h`, byte-identical first run. 43/43 native; purity OK;
 firmware green.
+
+## T-10.5 — quiet hours
+
+Pure `quiet_active(minute, start, end)` in lib/config (host-pinned:
+inclusive start, exclusive end, wrap past midnight, equal = whole-day),
+evaluated on the render task once per wall second — it is a
+`set_brightness`, never a render gate, so the DMA panel keeps refreshing
+and the strip keeps scrolling underneath; "blanks and restores on
+schedule" lands on the bench with the rest of the panel items.
+Interaction caught while wiring: a naive per-second apply of
+`hw.brightness` would have undone the boot ≤50 % PSU clamp one second
+after boot (panel.cpp power rule: raw brightness is trusted only after a
+human saves settings). The loop now tracks `bri_earned` (set by the
+save-notify, replacing the notify branch's direct set) and clamps until
+then — quiet hours override either way. Web GET/PUT gained the four
+quiet fields (minutes past local midnight, clamped); SPA got the
+checkbox, two time pickers and the quiet brightness. 44/44 native
+(9 new quiet-window edge cases); purity OK; firmware green.

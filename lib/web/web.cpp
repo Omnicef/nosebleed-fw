@@ -81,6 +81,11 @@ void settings_json(const config::Config& c, JsonDocument& d) {
     d["news_country"] = c.svc.news_country;
     d["stock_symbols"] = c.svc.stock_symbols;
     d["crypto_ids"] = c.svc.crypto_ids;
+    // T-10.5 — quiet hours in minutes past local midnight.
+    d["quiet_enabled"] = c.svc.quiet_enabled != 0;
+    d["quiet_start"] = c.svc.quiet_start;
+    d["quiet_end"] = c.svc.quiet_end;
+    d["quiet_brightness"] = c.svc.quiet_brightness;
 }
 
 long lclamp(long v, long lo, long hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -217,6 +222,16 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
         strlcpy(c.svc.stock_symbols, json["stock_symbols"], sizeof c.svc.stock_symbols);
     if (json["crypto_ids"].is<const char*>())
         strlcpy(c.svc.crypto_ids, json["crypto_ids"], sizeof c.svc.crypto_ids);
+
+    // T-10.5 — quiet hours (minutes past local midnight; end <= start wraps).
+    if (json["quiet_enabled"].is<bool>())
+        c.svc.quiet_enabled = json["quiet_enabled"].as<bool>() ? 1 : 0;
+    if (json["quiet_start"].is<long>())
+        c.svc.quiet_start = static_cast<uint16_t>(lclamp(json["quiet_start"], 0, 1439));
+    if (json["quiet_end"].is<long>())
+        c.svc.quiet_end = static_cast<uint16_t>(lclamp(json["quiet_end"], 0, 1439));
+    if (json["quiet_brightness"].is<long>())
+        c.svc.quiet_brightness = static_cast<uint8_t>(lclamp(json["quiet_brightness"], 0, 100));
 
     const bool structural = config::hw_structural_changed(old_hw, c.hw);
     if (!config::save(c)) {

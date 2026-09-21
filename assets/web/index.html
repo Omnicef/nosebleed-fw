@@ -210,6 +210,29 @@
                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
       </label>
 
+      <div class="col-span-2 pt-2 border-t border-gray-800 text-xs uppercase tracking-wide text-gray-500">Quiet hours</div>
+
+      <label class="flex items-center gap-2 col-span-2 cursor-pointer">
+        <input type="checkbox" x-model="form.quiet_enabled" class="accent-amber-400 w-4 h-4">
+        <span class="text-sm">Quiet hours <span class="text-gray-500 text-xs">(lowers brightness or blanks the panel)</span></span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">From</span>
+        <input type="time" x-model="quietStart"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Until <span class="text-gray-500">(&le; From = past midnight)</span></span>
+        <input type="time" x-model="quietEnd"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex flex-col gap-1 col-span-2">
+        <span class="text-xs text-gray-400">Brightness during quiet hours <span class="text-gray-500">(0 = blank)</span></span>
+        <input type="number" min="0" max="100" x-model.number="form.quiet_brightness"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <div class="col-span-2 pt-2 border-t border-gray-800 text-xs uppercase tracking-wide text-gray-500">API keys</div>
       <div class="col-span-2 space-y-2">
         <p class="text-xs text-gray-500">API keys are stored on the device only — never read back. Saving a blank field clears that key.</p>
         <div class="grid grid-cols-2 gap-2">
@@ -426,7 +449,9 @@ function settings() {
       weather_lat: '', weather_lon: '', weather_imperial: false,
       news_category: 'general', news_country: 'us',
       stock_symbols: '', crypto_ids: '',
+      quiet_enabled: false, quiet_brightness: 0,
     },
+    quietStart: '22:00', quietEnd: '07:00',
     keyForm: { gnews: '', finnhub: '' },
     keySet: { gnews: false, finnhub: false },
     keysMsg: '',
@@ -452,7 +477,12 @@ function settings() {
           news_category: d.news_category ?? 'general',
           news_country: d.news_country ?? 'us',
           stock_symbols: d.stock_symbols ?? '', crypto_ids: d.crypto_ids ?? '',
+          quiet_enabled: d.quiet_enabled ?? false,
+          quiet_brightness: d.quiet_brightness ?? 0,
         });
+        const hm = m => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+        this.quietStart = hm(d.quiet_start ?? 1320);
+        this.quietEnd = hm(d.quiet_end ?? 420);
         this.keySet = { gnews: !!d.gnews_key_set, finnhub: !!d.finnhub_key_set };
       } catch(e) { this.error = 'Could not load settings: ' + e.message; }
     },
@@ -480,10 +510,15 @@ function settings() {
     async save() {
       this.saved = false; this.restartBanner = false; this.error = null;
       try {
+        const b = {...this.form};
+        const m = s => /^\d{1,2}:\d{2}$/.test(s) ? +s.slice(0, -3) * 60 + +s.slice(-2) : null;
+        const qs = m(this.quietStart), qe = m(this.quietEnd);
+        if (qs != null) b.quiet_start = qs;
+        if (qe != null) b.quiet_end = qe;
         const r = await fetch('/api/settings', {
           method: 'PUT',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify(this.form),
+          body: JSON.stringify(b),
         });
         if (!r.ok) throw new Error(await r.text());
         const d = await r.json();

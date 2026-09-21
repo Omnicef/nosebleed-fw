@@ -365,6 +365,20 @@ static void test_logos_parse_host(void) {
 }
 
 // T-4.1 — POD config structs + defaults (port of Marquee seed_defaults).
+// T-10.5 — quiet-hours window: plain, wrapping and whole-day edges.
+static void test_config_quiet(void) {
+    using namespace nb::config;
+    TEST_ASSERT_TRUE(quiet_active(600, 540, 660));    // 10:00-11:00 noon case
+    TEST_ASSERT_FALSE(quiet_active(539, 540, 660));   // one minute before
+    TEST_ASSERT_TRUE(quiet_active(540, 540, 660));    // start is inclusive
+    TEST_ASSERT_FALSE(quiet_active(660, 540, 660));   // end is exclusive
+    TEST_ASSERT_TRUE(quiet_active(1400, 1320, 420));  // 22:00 -> 07:00 wrap
+    TEST_ASSERT_TRUE(quiet_active(100, 1320, 420));   // ...after midnight
+    TEST_ASSERT_FALSE(quiet_active(500, 1320, 420));  // ...daytime
+    TEST_ASSERT_TRUE(quiet_active(0, 0, 0));          // equal ends = whole day
+    TEST_ASSERT_TRUE(quiet_active(1439, 1320, 420));  // 23:59 in a wrap
+}
+
 static void test_config_defaults(void) {
     using namespace nb::config;
     // 4 KB blob cap is a compile-time static_assert; re-check numerically.
@@ -2032,6 +2046,7 @@ int main(void) {
     RUN_TEST(test_abbr_fallback);
     RUN_TEST(test_logos_parse_host);
     RUN_TEST(test_config_defaults);
+    RUN_TEST(test_config_quiet);
     RUN_TEST(test_config_validate);
     RUN_TEST(test_config_structural_change);
     RUN_TEST(test_config_tzmap);

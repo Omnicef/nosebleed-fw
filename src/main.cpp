@@ -297,6 +297,12 @@ static void task_render(void*) {
     // (DMA refresh is autonomous).
     uint32_t frames = 0, fps_t = last_ms;
     uint32_t worst_gap = 0, next_wait = 1;
+    // T-10.5 brightness state: raw config brightness is applied only once
+    // a settings save has proved a human is present (the boot ≤50 % PSU
+    // clamp, panel.cpp comment); quiet hours override either way.
+    int64_t bri_sec = -1;
+    uint8_t bri_applied = 0xFF;
+    bool bri_earned = false;
     for (;;) {
         if (Serial.available() > 0) {
             while (Serial.available()) Serial.read();
@@ -309,7 +315,7 @@ static void task_render(void*) {
         if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(next_wait))) {
             nb::config::load(g_cfg);
             nb::config::apply_timezone(g_cfg.hw.timezone);
-            nb::panel::set_brightness(g_cfg.hw.brightness);
+            bri_earned = true;  // a save happened — raw brightness is trusted
             g_strip_key = 0;  // force rebuild on next poll pass
         }
         const uint32_t t_busy = millis();
@@ -345,6 +351,25 @@ static void task_render(void*) {
         }
         const nb::render::Strip* s = ip_shown ? nullptr : g_holder.front();
         const int64_t now = static_cast<int64_t>(time(nullptr));
+        // T-10.5 — quiet hours on the local wall clock, re-evaluated once
+        // per wall second: quiet window ⇒ quiet_brightness (0 blanks the
+        // panel). This is a brightness set, not a render gate — the DMA
+        // refresh keeps running and the strip keeps scrolling underneath.
+        if (now != bri_sec) {
+            bri_sec = now;
+            uint8_t want = g_cfg.hw.brightness > 100 ? 100 : g_cfg.hw.brightness;
+            if (!bri_earned && want > 50) want = 50;  // boot clamp until a save
+            nb::render::LocalTime lt{};
+            if (g_cfg.svc.quiet_enabled && nb::render::system_local_time(nullptr, now, lt) &&
+                nb::config::quiet_active(lt.hour * 60 + lt.minute, g_cfg.svc.quiet_start,
+                                         g_cfg.svc.quiet_end))
+                want = g_cfg.svc.quiet_brightness > 100 ? 100 : g_cfg.svc.quiet_brightness;
+            if (want != bri_applied) {
+                bri_applied = want;
+                nb::panel::set_brightness(want);
+                Serial.printf("[quiet] brightness %u\n", want);
+            }
+        }
         if (s == nullptr || !s->canvas.valid()) {
             if (!ip_shown) nb::panel::blit(black);
         } else {

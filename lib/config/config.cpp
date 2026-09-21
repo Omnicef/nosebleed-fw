@@ -80,6 +80,12 @@ bool api_keys_valid(const ApiKeys& k) {
     return field_ok(k.gnews, sizeof(k.gnews)) && field_ok(k.finnhub, sizeof(k.finnhub));
 }
 
+bool quiet_active(int m, int start, int end) {
+    if (start == end) return true;  // whole-day window (wrap of a zero gap)
+    if (start < end) return m >= start && m < end;
+    return m >= start || m < end;  // wraps past midnight
+}
+
 void set_defaults(Config& c) {
     std::memset(&c, 0, sizeof(c));
     c.magic = kMagic;
