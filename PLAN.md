@@ -638,21 +638,32 @@ acceptance criterion, and it cannot be judged from a 4× PNG.
 
 ## §4a Open defects
 
-Found on the live device after Phase 8. Neither is fixed. Both need the board.
+Found on the live device after Phase 8 (D-3, runtime league toggles not reaching the scheduler, was fixed
+and removed at e2831fb). D-2, D-4 and D-5 remain open and all need the board; D-1 was fixed at aa452cb and
+is kept below as a decision record because it changes how D-2 must be read.
 
-### D-1 — Live clock is frozen on NHL/NBA/soccer cards
+### D-1 — Live clock is frozen on NHL/NBA/soccer cards — FIXED (aa452cb)
 
 `game_card.h:440` draws `game.clock`, but `ScoreboardWidget::cards_key`
-(`scoreboard_widget.h:49-89`) **never hashes it**. `status_display` is hashed, but only inside
-`if (g.has_situation)` — which is MLB/NFL only. So a period/clock card renders a game clock that freezes at
-strip-build time and only moves when something else changes the key.
+**never hashed it**. `status_display` was hashed, but only inside `if (g.has_situation)` — which is MLB/NFL
+only. So a period/clock card rendered a game clock that froze at strip-build time and only moved when
+something else changed the key.
 
-**A wrong clock is worse than no clock.** This is the more serious of the two defects.
+**Fixed by aa452cb (2026-09-20, Phase 10), option A: hash `period`/`clock`/`status_display` unconditionally
+for every game.** The drawn clock text now always moves the key — a live game with a running clock rebuilds
+the strip once per poll. That was the trade the entry framed (rebuild cost vs a wrong clock; the rebuild runs
+on core 0 and render never blinks), and it was accepted deliberately: **a per-poll rebuild is the accepted
+cost of a clock that is not wrong.** Pre/FINAL games carry constant text there, so idle slates stay quiet.
+The host test that had pinned the old behaviour was inverted to fail if a value tick stops moving the key —
+and that inverted test is what caught the same trap shape at T-10.4 (`cards_key` must hash every drawn
+field). Re-rendering a single card in place without a strip rebuild remains unbuilt; reach for it only if
+the rebuild cadence ever measures expensive (T-11.2 soak will say).
 
-Not a one-line fix. Hashing `clock` naively rebuilds the strip on every poll for every live game in those
-leagues — which is presumably what the `has_situation` guard avoids for MLB/NFL. The decision is rebuild cost
-versus freshness, and it wants measuring before choosing: either accept per-poll rebuilds for leagues with a
-running clock, or re-render that card in place without a full strip rebuild.
+**Consequence for D-2 (read before re-diagnosing paging):** the rebuild cadence this fix installs is
+`poll_interval_live` per live league, staggered ~5 s at boot (`poll.h`), so an N-league live slate rebuilds
+roughly every `20/N` seconds. With five live leagues that is ~4 s — the same interval the D-2 flicker was
+originally reported at. The 2026-09-19 D-2 capture predates this fix and had one league enabled; its
+conclusions about cadence do not transfer.
 
 ### D-2 — Static paging mode flickers every 5–8 s
 
@@ -692,6 +703,28 @@ millis-stamped `[d2]` markers — `commit gen=N` (poll side), `gen=N visible` (f
 planned ~6-line x-anchoring fix would fix nothing. The flag is `NB_D2_TRACE`, OFF by default and re-forced OFF
 by `idf_build.sh` on every non-`--trace` run — it cannot ride into a shipping build via stale cache.
 
+**Capture 2026-09-21 (aa452cb firmware, pre-game slate, static, trace build).** All three `[d2]` marker
+kinds work on current firmware. 3-card strip (clock + 2 MLB pre), `pages=3` constant; commits every
+**60.5 s** — the clock widget's minute tick, no live slate to tick game keys; page advances on a continuous
+**15.0 s** grid (`render_dwell_s` takes the boot_splash row's 15 s dwell, not the PLAN's 5 s default).
+No page jump is attributable to a commit — the apparent early jumps are grid ticks that happen to land
+3.4–3.9 s after a commit (60 s and 15 s are phase-locked, so the offset looks suspiciously constant; it is
+not causal). **Author watched the panel for the whole capture: no flicker.** Reading: a content-only commit
+over an unchanged card set is invisible — exactly what option A was supposed to buy — so the flicker needs
+a *slate* change (card set or order), i.e. mechanisms 1/2, i.e. the **live** window. The 2026-09-19
+"no pipeline source can produce 5–8 s" finding was correct for its one-league pre-D-1 slate but **does not
+generalise after aa452cb**: a multi-league live slate does produce ~20/N s commits and the originally
+reported 5–8 s cadence is reachable again.
+
+**Re-capture procedure (run at first pitch, 15:35 local / 22:35Z):** flip the device to static
+(`PUT /api/settings` with `display_mode:"static"` on a GET-Modify-Put round-trip), start the serial log
+(`while :; do cat /dev/ttyACM0 >> d2_live.log; sleep 0.2; done` under `timeout 3600` — the re-open loop
+survives CDC re-enumeration; a plain `cat` dies on the first reset), watch the panel, and when flicker is
+seen grab `curl /api/system | jq .uptime_s` to place it on the millis timeline. Discriminators: flicker on
+`commit gen=N visible` with **changed** `pages=` → mechanism 1; on unchanged `pages=` → mechanism 2
+(identity shift at same x); on `page A->B` alone → dwell arithmetic; on none of them → not page pipeline
+at all. Restore scroll afterwards.
+
 ### D-4 — Warm reset lets poll race ahead of WiFi (TLS before a route exists)
 
 `task_poll` gates on `time(nullptr) < 1700000000` — that asks *"do we have a clock?"*, not *"do we have a
@@ -702,6 +735,15 @@ the poll task passes the gate instantly and the first ESPN fetch fires ~3.7 s be
 **WiFi → SNTP → TLS** ordering AGENTS.md states as a hard rule (TLS attempted while there is no route; the
 `notBefore`-date protection the rule exists for is vacuous on this path). Pre-existing, not a T-9.3 regression;
 same gate code both sides of the conversion. Fix: gate on `WiFi.status() == WL_CONNECTED` as well as the clock.
+
+**Re-verified 2026-09-21, still open, window narrower than first described.** A deliberate warm reset on the
+aa452cb build (`rst:0x15 USB_UART_CHIP_RESET`) did NOT fire it: the poll gate passed at once (RTC clock
+survives) but the first *enabled* league is MLB at slug-index 2, and `poll.h` staggers first deadlines at
+`boot + i*5 s` — so the first fetch waited ~10 s while WiFi linked in ~4 s. The 2026-09-19 firing had WiFi
+slower than the stagger, not zero stagger. The race is real (gate is still clock-only, `main.cpp` task_poll)
+— it opens whenever WiFi reconnect outruns nothing, i.e. connect time > `5 s × first-enabled-league index`.
+The `E esp_core_dump_flash: No core dump partition found!` boot noise was re-confirmed on the same reset
+(partitions.csv still has no coredump row).
 
 **Trivial sdkconfig trim (related boot-log noise):** every reset prints
 `E esp_core_dump_flash: No core dump partition found!` ×2 — IDF builds core-dump support on and
@@ -726,6 +768,12 @@ amplify a genuine RF outage into an AP/storm flap. Candidate fix is a liveness
 signal from the consumers that already fail on it (poll's consecutive-fetch failures
 → `nb::net::force_reconnect()`, which reuses the dirty path) — needs care to stay
 below the backoff cadence.
+
+**Re-verified 2026-09-21, still open, description accurate.** `net.cpp` tick() is unchanged: the
+`WiFi.status() == WL_CONNECTED` early-return is still the only liveness test; no consumer-side failure
+signal exists anywhere in `lib/` or `src/` (`force_reconnect` is proposal, not code — grep-confirmed).
+Relevant to the T-11.2 soak: a 72 h run on a flaky venue network will pass supervision checks while
+serving last-good data indefinitely, so the soak must log poll ok/fail ratios, not just reconnect counts.
 
 
 ## §5 Risk register

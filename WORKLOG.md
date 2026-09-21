@@ -1738,3 +1738,45 @@ consecutive frames differ (window follows the scroll); strip route
 216×32 = 20,790 B (current 3-card config). Native 44/44, purity OK,
 firmware build green. Left untouched: the user's uncommitted PLAN.md
 T-12.6 addition.
+
+## Defect audit before the soak (PLAN §4a)
+
+Stale list fixed ahead of T-11.2 — a 72 h soak pointed at the wrong
+defects is worse than none.
+
+- **D-1 → recorded as FIXED (aa452cb).** Entry rewritten: what option A
+  is (hash period/clock/status_display unconditionally; per-poll rebuild
+  is the accepted cost of a clock that is not wrong), the inverted host
+  test, and the one consequence that changes other entries: live-slate
+  rebuild cadence is now ~20/N s (N live leagues, 5 s boot stagger) —
+  ~4-5 s at N=5, the interval the D-2 flicker was reported at.
+- **D-2 → new capture, hypothesis sharpened.** Trace build verified on
+  current firmware (all three [d2] marker kinds fire). Pre-game slate,
+  static: commits every 60.5 s (clock minute tick — nothing live to tick
+  game keys), page grid a continuous 15.0 s (boot_splash dwell wins
+  render_dwell_s — PLAN's 5 s default is overridden on this device),
+  zero commit-attributable page jumps, and the author watched the whole
+  capture: no flicker. Content-only commits over an unchanged card set
+  are invisible → the flicker needs a slate change → the live window.
+  Re-capture procedure recorded in the entry (run at first pitch);
+  the 9/19 "no 5–8 s source exists" finding explicitly does NOT
+  generalise past aa452cb. The "commit → page jump 3.4 s later" that
+  the raw log seems to show is phase-lock (60 and 15 are multiples),
+  not causality — noted so nobody fixes it.
+- **D-4 → open, re-verified, one correction.** Deliberate warm reset
+  (esptool run, rst:0x15) on current firmware passed the poll gate
+  instantly but did NOT race: MLB is first-enabled at slug-index 2 and
+  the boot stagger (+10 s) beat the ~4 s WiFi reconnect. The window
+  is `wifi_connect_time > 5 s × first-enabled-league-index`, not the
+  unconditional "~3.7 s every warm reset" the entry implied. Fix
+  unchanged (one line, gate on link too). Core-dump E-lines re-
+  confirmed; partitions.csv still has no coredump row.
+- **D-5 → open, accurate.** net.cpp tick() unchanged: WL_CONNECTED
+  early-return is the only liveness test; force_reconnect is still
+  proposal not code. Added the soak consequence: supervision passes
+  while a zombie link serves last-good forever — the soak must log
+  poll ok/fail ratios.
+
+Device left on the trace build (needed for tonight's live-window
+recapture; idf_build.sh re-forces trace OFF on the next plain build)
+and restored to scroll mode after the static test window.
