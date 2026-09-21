@@ -24,7 +24,7 @@ Two things were validated on hardware before any of it was built, and both are r
 | 7 | Scroll engine — unified strip, paging, preemption | ✅ |
 | 8 | Web server, `/api/*`, browser config | ✅ |
 | 9 | SoftAP provisioning, ESP-IDF conversion, OTA | ✅ |
-| 10 | Weather and ticker widgets | ⬜ |
+| 10 | Weather, tickers, quiet hours | ✅ (bench confirm pending) |
 | 11 | Hardening, watchdogs, 72 h soak | ⬜ |
 | 12 | Card redesign | ⬜ |
 

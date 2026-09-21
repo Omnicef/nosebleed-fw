@@ -1691,3 +1691,15 @@ then — quiet hours override either way. Web GET/PUT gained the four
 quiet fields (minutes past local midnight, clamped); SPA got the
 checkbox, two time pickers and the quiet brightness. 44/44 native
 (9 new quiet-window edge cases); purity OK; firmware green.
+
+## T-10.6 — Phase 10 close
+
+README phase table row 10 ✅ (bench note: the panel-side acceptance for
+quiet hours — blank/restore on the wall clock — and the first live
+GNews/Finnhub fetch with real keys join the hardware to-do list:
+T-0.2-era items like every other panel truth). No new dependencies
+(licence doc unchanged). Deferred-by-design from PLAN Phase 10: none —
+T-10.1..10.5 all landed. Open items deliberately left visible: GNews/
+Finnhub success shapes are docs-only until a key lands (flagged in the
+T-10.3 entry), and the ESPN-headlines alternative for the news leg is
+recorded in the session header.
