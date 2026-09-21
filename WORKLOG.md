@@ -1703,3 +1703,38 @@ T-10.1..10.5 all landed. Open items deliberately left visible: GNews/
 Finnhub success shapes are docs-only until a key lands (flagged in the
 T-10.3 entry), and the ESPN-headlines alternative for the news leg is
 recorded in the session header.
+
+## Dashboard preview — panel window, chained polling (post-Phase-10 fix)
+
+Reported from the live dashboard: `/preview` served the **full strip**
+(76,086 B measured, grows with the slate) at ~21 KB/s ≈ 3 s per response,
+while the SPA polled every 2 s — so most image loads were aborted mid
+download: broken-image icon, and the panel view was a wide letterbox
+anyway. Fixed both ends.
+
+- **Serve the panel, not the strip.** The render task now publishes the
+  window origin it actually displayed (`g_preview_x`, stored right where
+  both display modes converge on the one blit — recomputing at request
+  time would drift mid-scroll); `GET /preview` emits a pw×ph BMP at that
+  x — **6,198 B constant** (64×32), off-canvas columns come black via the
+  bounds-checked accessor, same as `panel::blit`. Full strip moved to
+  `GET /api/system/preview/strip` (debug). `send_bmp_window` is the one
+  shared fill. Host test extended: `bmp_row(64)==192`, 6,198 B unpadded.
+- **Chained polling.** `preview()` reloads on the img's own load/error
+  event (+250 ms gap, +2 s on error) instead of `setInterval(2000)` —
+  one request ever in flight, pacing adapts to the network; error shows
+  a "panel image unavailable — retrying" overlay over the last-good
+  frame, not a broken icon.
+- **Bench fix found by the flash:** the poll task's deliberate 1 s tick
+  ran `load_keys` every pass once T-10.3 put it on that path → NVS read
+  + a `keys NOT_FOUND` [E] line every second in the normal no-keys
+  state. Keys now read lazily (only when a keyed ticker source is due)
+  and `load_keys` probes with `isKey` first (silent; verified against
+  Preferences.cpp — `getType` logs nothing). Verified: zero [E] lines on
+  a 30 s boot capture.
+
+Device (192.168.123.72): `/preview` 200 × 3 = 6,198 B each, 23–100 ms,
+consecutive frames differ (window follows the scroll); strip route
+216×32 = 20,790 B (current 3-card config). Native 44/44, purity OK,
+firmware build green. Left untouched: the user's uncommitted PLAN.md
+T-12.6 addition.

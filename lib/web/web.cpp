@@ -22,6 +22,7 @@
 #include "../data/espn.h"
 #include "../logos/logos_ota.h"
 #include "../net/net.h"
+#include "../panel/panel.h"
 #include "../render/scroll.h"
 #include "bmp.h"
 
@@ -567,6 +568,7 @@ void handle_widgets_reorder(AsyncWebServerRequest* request, JsonVariant& json) {
 // ─── T-8.6 — /preview (24-bit BMP, 54-byte header, no zlib) ──────────────
 
 const render::StripHolder* g_strip = nullptr;
+const std::atomic<int32_t>* g_win_x = nullptr;  // render task's window origin
 void (*g_show_ip_hook)() = nullptr;
 
 // Response-owned PSRAM buffer: the chunked filler's std::function keeps the
@@ -579,17 +581,11 @@ struct BmpBuf {
     ~BmpBuf() { heap_caps_free(p); }
 };
 
-void handle_preview_get(AsyncWebServerRequest* request) {
-    if (g_strip == nullptr) {
-        request->send(503, "application/json", "{\"error\":\"preview not wired\"}");
-        return;
-    }
-    const render::Strip* s = g_strip->front();
-    if (s == nullptr || !s->canvas.valid()) {
-        request->send(503, "application/json", "{\"error\":\"no strip yet\"}");
-        return;
-    }
-    const int w = s->canvas.w, h = s->canvas.h;
+// Canvas window -> chunked 24-bit BMP. get() is bounds-checked (off-canvas
+// reads black), so the scroll lead-in window needs no special case — the
+// same x0 the render task fed to panel::blit reproduces the panel exactly.
+void send_bmp_window(AsyncWebServerRequest* request, const render::Strip* s, int x0, int w,
+                     int h) {
     const uint32_t row = bmp_row(static_cast<uint32_t>(w));
     const uint32_t img = row * static_cast<uint32_t>(h);
     auto bmp = std::make_shared<BmpBuf>();
@@ -606,7 +602,7 @@ void handle_preview_get(AsyncWebServerRequest* request) {
         uint8_t* dst = b + 54 + r * row;
         for (int x = 0; x < w; ++x) {
             uint8_t red, gr, bl;
-            nb::unpack565(s->canvas.get(x, y), red, gr, bl);
+            nb::unpack565(s->canvas.get(x0 + x, y), red, gr, bl);
             dst[3 * x] = bl;
             dst[3 * x + 1] = gr;
             dst[3 * x + 2] = red;
@@ -620,6 +616,37 @@ void handle_preview_get(AsyncWebServerRequest* request) {
                              memcpy(dst, bmp->p + index, n);
                              return n;
                          });
+}
+
+const render::Strip* valid_strip(AsyncWebServerRequest* request) {
+    if (g_strip == nullptr) {
+        request->send(503, "application/json", "{\"error\":\"preview not wired\"}");
+        return nullptr;
+    }
+    const render::Strip* s = g_strip->front();
+    if (s == nullptr || !s->canvas.valid()) {
+        request->send(503, "application/json", "{\"error\":\"no strip yet\"}");
+        return nullptr;
+    }
+    return s;
+}
+
+// Dashboard poll: exactly the panel — pw x ph window at the render task's
+// published origin. ~6 KB constant (64x32), whatever the strip width.
+void handle_preview_get(AsyncWebServerRequest* request) {
+    const render::Strip* s = valid_strip(request);
+    if (s == nullptr) return;
+    int x0 = g_win_x ? g_win_x->load(std::memory_order_relaxed) : 0;
+    if (x0 < 0) x0 = 0;  // render task never published yet
+    send_bmp_window(request, s, x0, nb::panel::width(), s->canvas.h);
+}
+
+// Debug: the whole composed strip (can be ~76 KB and grows with the slate —
+// this is what the dashboard used to poll, and why it showed broken images).
+void handle_preview_strip_get(AsyncWebServerRequest* request) {
+    const render::Strip* s = valid_strip(request);
+    if (s == nullptr) return;
+    send_bmp_window(request, s, 0, s->canvas.w, s->canvas.h);
 }
 
 }  // namespace
@@ -752,6 +779,8 @@ bool init() {
             handle_preview_get);
     srv->on(AsyncURIMatcher::exact("/api/system/preview"), AsyncWebRequestMethod::HTTP_GET,
             handle_preview_get);
+    srv->on(AsyncURIMatcher::exact("/api/system/preview/strip"), AsyncWebRequestMethod::HTTP_GET,
+            handle_preview_strip_get);
     srv->on(AsyncURIMatcher::exact("/api/system/show-ip"), AsyncWebRequestMethod::HTTP_POST,
             [](AsyncWebServerRequest* request) {
                 if (g_show_ip_hook != nullptr) g_show_ip_hook();
@@ -877,7 +906,11 @@ bool init() {
     return true;
 }
 
-void set_preview_source(const render::StripHolder* holder) { g_strip = holder; }
+void set_preview_source(const render::StripHolder* holder,
+                        const std::atomic<int32_t>* win_x) {
+    g_strip = holder;
+    g_win_x = win_x;
+}
 void set_show_ip_hook(void (*hook)()) { g_show_ip_hook = hook; }
 void set_reboot_hook(void (*hook)(const char*)) { g_reboot_hook = hook; }
 

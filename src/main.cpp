@@ -75,6 +75,10 @@ using nb::config::kLeagueSlugs;
 static nb::data::DataCache* g_cache = nullptr;
 static nb::data::InfoCache g_info;  // weather + ticker (T-10.x); small, static
 static nb::render::StripHolder g_holder;
+// T-10.x dashboard preview: the window origin currently ON the panel, published
+// every frame (both display modes converge on one blit). The web task serves
+// exactly this x — recomputing at request time would drift mid-scroll.
+static std::atomic<int32_t> g_preview_x{-1};
 static nb::render::StripBuilder g_builder;  // writer: poll task only
 static nb::render::ClockWidget* g_clock = nullptr;
 static nb::render::ScoreboardWidget* g_sb[kLeagueSlugCount] = {};
@@ -398,6 +402,7 @@ static void task_render(void*) {
                 scroll += static_cast<double>(g_cfg.hw.scroll_speed) * (ms - last_ms) / 1000.0;
                 w0 = nb::render::scroll_window_x(s->canvas.w, pw, static_cast<int32_t>(scroll));
             }
+            g_preview_x.store(w0, std::memory_order_relaxed);
             nb::panel::blit(s->canvas, -w0, 0);  // full-panel write (T-7.3 rule)
         }
         const uint32_t t_prev = last_ms;
@@ -503,31 +508,36 @@ static void task_poll(void*) {
         // A source's failure only ever skips its own publish, so a dead
         // news feed never takes the crypto board down with it. All three
         // run on this task, sequentially — still one TLS session at a time.
+        // Keys are read lazily (poll ticks at 1 s; reading NVS per pass
+        // was per-second) — only when a keyed source is actually due.
         nb::config::ApiKeys keys;
-        nb::config::load_keys(keys);  // tiny NVS blob; poll task is the only reader
-        struct { const char* widget; const char* param; } tsrc[] = {
-            {"news", keys.gnews}, {"stocks", keys.finnhub}, {"crypto", ""}};
+        bool keys_read = false;
+        const char* const twidget[] = {"news", "stocks", "crypto"};
         for (int ti = 0; ti < 3; ++ti) {
             const int src = info_src::kNews + ti;
-            const bool armed = widget_row_enabled(pc, tsrc[ti].widget) &&
-                               (ti == 2 || tsrc[ti].param[0] != '\0');  // keyed srcs need keys
+            const bool armed = widget_row_enabled(pc, twidget[ti]);
             isch.set(src, {armed, 900, 900});
             if (!isch.due(src, now)) continue;
+            if (ti != 2 && !keys_read) {  // crypto is keyless
+                nb::config::load_keys(keys);
+                keys_read = true;
+            }
+            const bool have_key = ti == 2 || (ti == 0 ? keys.gnews[0] : keys.finnhub[0]) != '\0';
             TickerList tl;
             bool tok = false;
-            if (ti == 0) {  // news
+            if (ti == 0 && have_key) {  // news
                 char url[256];
                 if (news_url(url, sizeof url, pc.svc.news_category, pc.svc.news_country,
                              keys.gnews) &&
                     news_fetch(url, tl)) {
                     tok = true;
                 }
-            } else if (ti == 1) {  // stocks — per-symbol GETs inside
+            } else if (ti == 1 && have_key) {  // stocks — per-symbol GETs inside
                 if (pc.svc.stock_symbols[0] != '\0' &&
                     stocks_fetch(pc.svc.stock_symbols, keys.finnhub, tl)) {
                     tok = true;
                 }
-            } else {  // crypto — keyless, ids list is the gate
+            } else if (ti == 2) {  // crypto — keyless, ids list is the gate
                 char url[256];
                 if (coin_url(url, sizeof url, pc.svc.crypto_ids) &&
                     coins_fetch(url, pc.svc.crypto_ids, tl)) {
@@ -700,7 +710,7 @@ void setup() {
   // thread is created here, and AsyncTCP's begin() asserts if it is absent.
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
-  nb::web::set_preview_source(&g_holder);  // T-8.6 /preview
+  nb::web::set_preview_source(&g_holder, &g_preview_x);  // T-8.6 /preview
   nb::web::set_show_ip_hook(web_show_ip);
   nb::web::set_reboot_hook(arm_reboot);   // T-9.6 factory reset (web path)
   pinMode(kResetBtn, INPUT_PULLUP);       // T-9.6 factory reset (BOOT hold)

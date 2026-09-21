@@ -2025,6 +2025,18 @@ static void test_bmp_header(void) {
     TEST_ASSERT_EQUAL_CHAR('M', b[1]);
     memcpy(&size, b + 2, 4);
     TEST_ASSERT_EQUAL_UINT32(54 + 32 * 7, size);
+
+    // 64-wide panel window (the dashboard poll): 64*3 = 192 is already
+    // 4-aligned — the unpadded path at the live size, 54 + 6144 = 6,198 B.
+    TEST_ASSERT_EQUAL_UINT32(192, nb::web::bmp_row(64));
+    nb::web::write_bmp_header(b, 64, 32);
+    memcpy(&size, b + 2, 4);
+    TEST_ASSERT_EQUAL_UINT32(6198, size);
+    int32_t dims;
+    memcpy(&dims, b + 18, 4);
+    TEST_ASSERT_EQUAL_INT32(64, dims);
+    memcpy(&dims, b + 22, 4);
+    TEST_ASSERT_EQUAL_INT32(32, dims);
 }
 
 int main(void) {

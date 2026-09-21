@@ -33,12 +33,17 @@
 
   <!-- ═══════════════════════════════════════════════════════════ DASHBOARD -->
   <section x-show="activeTab === 'dashboard'" class="space-y-4">
-    <div class="bg-black rounded border border-gray-800 p-3 flex items-center justify-center"
-         x-data="preview()" x-init="start()">
-      <img :src="src" alt="panel preview"
+    <div class="bg-black rounded border border-gray-800 p-3 flex items-center justify-center relative"
+         x-data="preview()" x-init="start()" @dispose="stop()">
+      <div x-show="!src" class="text-gray-600 text-sm px-16 py-12">Loading…</div>
+      <img x-show="src" :src="src" alt="panel preview"
            class="rounded"
            style="image-rendering: crisp-edges; image-rendering: pixelated; width:384px; height:192px; object-fit:contain"
-           @error="onError()" />
+           @load="onLoad()" @error="onErr()" />
+      <div x-show="err"
+           class="absolute inset-0 flex items-center justify-center rounded bg-black/75 text-amber-300 text-sm">
+        panel image unavailable — retrying
+      </div>
     </div>
     <div x-data="actions()" class="flex items-center gap-4">
       <button @click="showIp()"
@@ -417,14 +422,19 @@ function app() {
 
 function preview() {
   return {
-    src: '/api/system/preview?' + Date.now(),
-    _timer: null,
-    start() {
-      this._timer = setInterval(() => {
-        this.src = '/api/system/preview?' + Date.now();
-      }, 2000);
-    },
-    onError() {},
+    src: '',
+    err: false,
+    _stop: false,
+    start() { this._stop = false; this.reload(); },
+    stop() { this._stop = true; },
+    // Chained on the img's own load/error event, not setInterval: a ~3 s
+    // response under a 2 s interval aborts most images mid-download
+    // (broken-image icon). One request is ever in flight — the handlers
+    // only run when the current image settles — and the gap adapts to the
+    // network instead of assuming a response time.
+    reload() { if (!this._stop) this.src = '/preview?' + Date.now(); },
+    onLoad() { if (!this.src) return; this.err = false; setTimeout(() => this.reload(), 250); },
+    onErr() { if (!this.src) return; this.err = true; setTimeout(() => this.reload(), 2000); },
   };
 }
 

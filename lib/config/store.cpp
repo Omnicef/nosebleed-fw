@@ -104,7 +104,10 @@ bool load_keys(ApiKeys& out) {
         std::memset(&out, 0, sizeof(out));
         return false;
     }
-    const size_t len = p.getBytesLength(kKeyKeys);
+    // isKey first: "no keys stored" is the NORMAL steady state, and
+    // getBytesLength on an absent key prints an [E] line every time —
+    // which at the poll task's 1 s tick was once per second.
+    const size_t len = p.isKey(kKeyKeys) ? p.getBytesLength(kKeyKeys) : 0;
     const bool ok = len == sizeof(ApiKeys) &&
                     p.getBytes(kKeyKeys, &out, sizeof(out)) == sizeof(ApiKeys) &&
                     api_keys_valid(out);

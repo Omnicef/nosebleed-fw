@@ -7,6 +7,9 @@
 
 #ifdef ARDUINO
 
+#include <atomic>
+#include <cstdint>
+
 namespace nb {
 namespace render {
 class StripHolder;
@@ -16,9 +19,14 @@ namespace web {
 // Idempotent: constructs and starts the server once. false = out of memory.
 bool init();
 
-// T-8.6 — /preview and /api/system/preview snapshot this holder's front
-// strip as a 24-bit BMP. Called once at startup, before init().
-void set_preview_source(const render::StripHolder* holder);
+// T-8.6 — /preview and /api/system/preview snapshot a panel-sized window of
+// this holder's front strip as a 24-bit BMP; win_x is the render task's
+// published window origin, so the image tracks what the panel shows rather
+// than recomputing it at request time (they differ mid-scroll). The full
+// composed strip moves to /api/system/preview/strip for debugging.
+// Called once at startup, before init().
+void set_preview_source(const render::StripHolder* holder,
+                        const std::atomic<int32_t>* win_x);
 
 // T-8.6 — POST /api/system/show-ip fires this (main.cpp arms the render
 // task's IP splash). No-op if unset.
