@@ -1534,13 +1534,20 @@ the device was only ever a test fixture.)*
 
 Scope: T-10.1 … T-10.6 (weather, ticker, scheduling). Panel DISCONNECTED —
 render-path acceptance is host-side (PNGs/goldens); on-panel confirmation
-defers to the bench. Marquee repo NOT available this session
-(`$MARQUEE_REPO` unset) and the weather/ticker layouts were never committed
-here — owner authorised a **fresh minimal design** for both widgets and the
-provider trio **Open-Meteo** (keyless) / **GNews** + **Finnhub** (keys →
-NVS, never GET, never logged) / **CoinGecko** (keyless). Every API shape
-was captured live (or from the vendor docs for the two keyed ones) — not
-from memory.
+defers to the bench. Correction found mid-T-10.1 and confirmed against the
+source: the Marquee repo IS on this box (`/home/anthony/VSCode/Marquee`,
+only `$MARQUEE_REPO` was unset) — but its weather and ticker widgets AND
+its data clients are all **Phase-4 placeholders, never implemented**
+(`__all__ = []` stubs). There is no Python layout to port; PLAN's "port
+the Python's layout" was aspirational. Owner was (correctly, it turns out)
+asked and authorised a **fresh minimal design** for both widgets and the
+provider trio **Open-Meteo** (keyless — matching the stub's stated intent
+"Defaults to Open-Meteo (keyless)") / **GNews** + **Finnhub** (keys →
+NVS, never GET, never logged) / **CoinGecko** (keyless). The ticker stub
+named "ESPN news headlines, stock quotes, crypto prices" — ESPN headlines
+are the keyless alternative for the news leg if the GNews key ever stings.
+Every API shape was captured live (or from the vendor docs for the two
+keyed ones) — not from memory.
 
 ## D-1 — frozen clock on period/clock cards (fixed before Phase 10)
 
@@ -1597,3 +1604,20 @@ under assertions/TSan; a plain build silently misorders. The stress test
 found this, but the first red was my own test: the pre-thread fixture
 publish legitimately satisfies "last-good", so its values must obey the
 same-generation invariant the thread checks.
+
+## T-10.2 — weather widget (fresh design, pixel-parity golden)
+
+Marquee's `weather.py`/`ticker.py` are `__all__ = []` stubs — the first
+widgets with no Python pixel parity to prove against. Layout: cond
+(5x8, white, y=1, truncated to 12 glyphs — "Freezing drizzle" (16) is the
+longest WMO string and clips at 13), temp (6x12, y=9) + degree ring + unit
+(5x8, y=13), H/L (5x8, gray, y=24). No '°' exists in the baked ASCII 32–126
+glyph tables, so it's drawn with `ellipse(r=2)` — the pixel-proven
+Pillow-parity special case; the golden draws the identical PIL
+`draw.ellipse`. Generator `tools/gen_weather_golden.py`, golden + parity
+test `test_weather_widget` (also: hidden-before-fetch, hidden-when-disabled
+— which caught cards() ignoring `enabled`, a ScoreboardWidget invariant the
+new widget didn't share — and key-moves-on-temp-change). Wired into the
+producer set: `kMaxProducers = leagues + 5` sized once for the T-10.4
+tickers. 41/41 native; purity OK; firmware green (`hl[16]` → `hl[24]` for
+the int16-min H/L strings under -Werror=format-truncation).

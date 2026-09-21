@@ -43,6 +43,7 @@
 #include "golden_game_pre.h"
 #include "golden_game_situation.h"
 #include "golden_logo.h"
+#include "golden_weather.h"
 #include "logo.h"
 #include "logos.h"
 #include "png_writer.h"
@@ -50,6 +51,7 @@
 #include "scoreboard_widget.h"
 #include "scroll.h"
 #include "strip.h"
+#include "weather_widget.h"
 
 using namespace nb;
 
@@ -1414,6 +1416,60 @@ static bool canvas_has_ink(const Canvas16& c) {
     return false;
 }
 
+// T-10.2 — weather card pixel parity vs the golden + behaviour: hidden
+// before first fetch and when disabled, key stable across `now`, key moves
+// on a temperature change.
+static void test_weather_widget(void) {
+    nb::data::InfoCache cache;
+    bool enabled = true;
+    render::WeatherWidget widget(&cache, &enabled);
+    TEST_ASSERT_FALSE_MESSAGE(widget.is_visible(100), "weather visible before first fetch");
+
+    nb::data::Weather* w = cache.writable_weather();
+    std::strncpy(w->cond, "Partly cloudy", sizeof w->cond - 1);
+    w->temp = 72; w->high = 75; w->low = 66; w->unit = 'F';
+    cache.publish_weather(1000);
+
+    TEST_ASSERT_TRUE(widget.is_visible(1000));
+    const uint32_t key = widget.cards_key(1000);
+    TEST_ASSERT_NOT_EQUAL(0u, key);
+    TEST_ASSERT_EQUAL_UINT32(key, widget.cards_key(2000));
+
+    Canvas16 c = canvas_alloc(render::CARD_W, GOLDEN_WEATHER_H);
+    TEST_ASSERT_EQUAL_INT(1, widget.cards(&c, 1, 1000));
+
+    int diffs = 0, first = -1;
+    for (int i = 0; i < GOLDEN_WEATHER_W * GOLDEN_WEATHER_H; ++i) {
+        if (c.px[i] != GOLDEN_WEATHER[i]) {
+            if (first < 0) first = i;
+            ++diffs;
+        }
+    }
+    uint8_t rgb[GOLDEN_WEATHER_W * GOLDEN_WEATHER_H * 3];
+    expand_to_rgb(c, rgb);
+    TEST_ASSERT_TRUE_MESSAGE(write_png_rgb("test/out/weather_fw.png", GOLDEN_WEATHER_W,
+                                                          GOLDEN_WEATHER_H, rgb),
+                               "weather_fw.png write failed");
+    char msg[96];
+    std::snprintf(msg, sizeof msg, "weather parity: %d px differ (first @x=%d y=%d)", diffs,
+                  first % GOLDEN_WEATHER_W, first / GOLDEN_WEATHER_H);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, diffs, msg);
+    canvas_free(c);
+
+    w = cache.writable_weather();
+    std::strncpy(w->cond, "Partly cloudy", sizeof w->cond - 1);
+    w->temp = 73; w->high = 75; w->low = 66; w->unit = 'F';
+    cache.publish_weather(2000);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(key, widget.cards_key(1000),
+                                  "temperature change did not change cards_key");
+
+    enabled = false;
+    TEST_ASSERT_FALSE(widget.is_visible(2000));
+    Canvas16 d = canvas_alloc(render::CARD_W, GOLDEN_WEATHER_H);
+    TEST_ASSERT_EQUAL_INT(0, widget.cards(&d, 1, 2000));
+    canvas_free(d);
+}
+
 static void test_scoreboard_widget(void) {
     using namespace data;
     static DataCache cache;
@@ -1816,6 +1872,7 @@ int main(void) {
     RUN_TEST(test_data_poll_scheduler);
     RUN_TEST(test_data_weather);
     RUN_TEST(test_info_cache_weather);
+    RUN_TEST(test_weather_widget);
     RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
     RUN_TEST(test_compute_pages);

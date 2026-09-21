@@ -39,6 +39,7 @@ static void heartbeat(const char* name) {
 #include "esp_app_format.h"  // esp_app_desc_t (boot-guard image id)
 #include "cache.h"
 #include "clock_widget.h"
+#include "weather_widget.h"
 #include "date_window.h"
 #include "espn.h"
 #include "espn_json.h"
@@ -75,6 +76,7 @@ static nb::render::StripHolder g_holder;
 static nb::render::StripBuilder g_builder;  // writer: poll task only
 static nb::render::ClockWidget* g_clock = nullptr;
 static nb::render::ScoreboardWidget* g_sb[kLeagueSlugCount] = {};
+static nb::render::WeatherWidget* g_weather = nullptr;
 static bool g_wen[nb::config::kMaxWidgets] = {};  // stable enabled flags for widgets[]
 static uint32_t g_strip_key = 0;
 
@@ -100,7 +102,9 @@ static void boot_apply_favorites(const nb::config::Config& cfg);
 // league) and ordered per pass by boot_order_producers(). T-8.5: the strip
 // order IS the carousel widget order — /api/widgets/reorder needs no
 // restart, only a strip-key change.
-static nb::render::CardProducer* g_prod[kLeagueSlugCount + 1];
+// +5 headroom: weather now, news/stocks/crypto tickers at T-10.4.
+static constexpr int kMaxProducers = kLeagueSlugCount + 5;
+static nb::render::CardProducer* g_prod[kMaxProducers];
 static int g_prod_n = 0;
 
 static void boot_create_producers() {
@@ -115,6 +119,8 @@ static void boot_create_producers() {
                 g_sb[lg] = new nb::render::ScoreboardWidget(g_cache, lg, kLeagueSlugs[lg],
                                                             &g_wen[i], kBootResolver,
                                                             nb::render::system_local_time, nullptr);
+        } else if (std::strcmp(w.type, "weather") == 0 && g_weather == nullptr) {
+            g_weather = new nb::render::WeatherWidget(&g_info, &g_wen[i]);
         }
     }
 }
@@ -133,7 +139,7 @@ static void boot_order_producers(const nb::config::Config& cfg) {
         }
     for (int i = 0; i < nb::config::kMaxWidgets; ++i) g_wen[i] = false;
     int out = 0;
-    for (int j = 0; j < n && out < kLeagueSlugCount + 1; ++j) {
+    for (int j = 0; j < n && out < kMaxProducers; ++j) {
         const auto& w = cfg.widgets[idx[j]];
         const int wi = idx[j];
         g_wen[wi] = w.enabled != 0;
@@ -142,6 +148,8 @@ static void boot_order_producers(const nb::config::Config& cfg) {
         } else if (std::strcmp(w.type, "scoreboard") == 0) {
             const int lg = league_of_slug(w.league);
             if (lg >= 0 && g_sb[lg] != nullptr) g_prod[out++] = g_sb[lg];
+        } else if (std::strcmp(w.type, "weather") == 0 && g_weather != nullptr) {
+            g_prod[out++] = g_weather;
         }
     }
     g_prod_n = out;
@@ -160,7 +168,7 @@ static void boot_apply_favorites(const nb::config::Config& cfg) {
     }
 }
 
-static int boot_producers(nb::render::CardProducer* ps[kLeagueSlugCount + 1]) {
+static int boot_producers(nb::render::CardProducer* ps[kMaxProducers]) {
     for (int i = 0; i < g_prod_n; ++i) ps[i] = g_prod[i];
     return g_prod_n;
 }
@@ -185,9 +193,9 @@ static uint32_t boot_strip_key(nb::render::CardProducer* const* ps, int n, int64
 }
 
 static void boot_rebuild_strip(int64_t now, const nb::config::Config& cfg) {
-    nb::render::CardProducer* ps[kLeagueSlugCount + 1];
+    nb::render::CardProducer* ps[kMaxProducers];
     const int n = boot_producers(ps);
-    int order[kLeagueSlugCount + 1];
+    int order[kMaxProducers];
     const int on = nb::render::order_producers(ps, n, now, cfg.hw.preemption_enabled != 0, order);
     nb::logos::set_phase(nb::logos::Phase::REBUILD);
     const int placed = g_builder.build(*g_holder.back(), ps, order, on, cfg.hw.card_gap,
@@ -455,7 +463,7 @@ static void task_poll(void*) {
         }
         boot_order_producers(pc);  // T-8.5: carousel order/enabled apply on this pass
         boot_apply_favorites(pc);  // T-8.4: /api/favorites applies on this pass
-        nb::render::CardProducer* ps[kLeagueSlugCount + 1];
+        nb::render::CardProducer* ps[kMaxProducers];
         const int n = boot_producers(ps);
         const uint32_t key = boot_strip_key(ps, n, now2, pc);
         if (key != g_strip_key) {
