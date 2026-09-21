@@ -22,7 +22,7 @@ namespace nb {
 namespace config {
 
 constexpr uint32_t kMagic = 0x4E424346;  // "NBCF" little-endian
-constexpr uint16_t kSchemaVersion = 1;   // fresh device, no SQLite history
+constexpr uint16_t kSchemaVersion = 2;   // v2: Services block + info widgets (Phase 10)
 
 constexpr size_t kLeagueIdLen = 26;   // "womens-college-basketball" + NUL
 constexpr size_t kWidgetIdLen = 40;   // "scoreboard_womens-college-basketball" + NUL
@@ -76,7 +76,7 @@ struct HardwareSetting {
 
 struct WidgetConfig {
     char id[kWidgetIdLen];      // stable slug, e.g. "clock", "scoreboard_mlb"
-    char type[16];              // "boot_splash" | "clock" | "scoreboard" | ...
+    char type[16];              // "boot_splash" | "clock" | "scoreboard" | "weather" | ...
     uint16_t order;             // carousel order (drag-to-reorder)
     uint8_t enabled;
     float dwell_s;              // static-mode dwell
@@ -98,12 +98,38 @@ struct Favorite {
     uint8_t priority;
 };
 
+// Phase 10 — non-secret parameters for the info feeds (weather + ticker)
+// and the display schedule. Deliberately NOT in HardwareSetting: none is
+// panel-structural, all are live-applicable. Secret ticker keys are NOT
+// here — they live in the ApiKeys blob beside Creds (never GET, never
+// logged). Whole struct copied alongside the rest of Config.
+struct Services {
+    // Weather — Open-Meteo, keyless. lat/lon plain decimals (weather_url
+    // validates before use); empty lat = weather disabled.
+    char lat[12];
+    char lon[12];
+    uint8_t imperial;   // 0 = Celsius, 1 = Fahrenheit
+    // Ticker sources — public query params only (GNews category/country,
+    // comma-separated Finnhub symbols, CoinGecko ids). Keys are separate.
+    char news_category[16];
+    char news_country[3];
+    char stock_symbols[48];
+    char crypto_ids[48];
+    // T-10.5 — quiet hours on the local wall clock (config timezone).
+    // Window is [quiet_start, quiet_end); wraps when quiet_end <= start.
+    uint8_t quiet_enabled;
+    uint16_t quiet_start;  // minutes past local midnight
+    uint16_t quiet_end;    // minutes past local midnight
+    uint8_t quiet_brightness;  // brightness during quiet hours (0 = blank)
+};
+
 // Whole config as one NVS blob (T-4.2). kMagic/kSchemaVersion gate the
 // corrupted-blob fallback; *_count bound the used rows of each array.
 struct Config {
     uint32_t magic;
     uint16_t schema;
     HardwareSetting hw;
+    Services svc;
     uint16_t widget_count;
     WidgetConfig widgets[kMaxWidgets];
     uint16_t league_count;
@@ -127,6 +153,19 @@ struct Creds {
 // explicit: a form POST percent-decodes, so "%0A" can arrive as a real
 // newline and would desync anything that prints the value.
 bool creds_valid(const Creds& c);
+
+// T-10.3 — ticker API keys. A SEPARATE NVS blob ("keys") with the exact
+// Creds discipline: never part of Config, never serialised by any GET,
+// never logged. The allowlist matters beyond tidiness — these strings are
+// concatenated into https query strings, so anything outside
+// [A-Za-z0-9._-] could re-shape the request (spaces, '&', '#', CR/LF).
+// Empty string = unset (valid); fetch code treats unset as "source off".
+struct ApiKeys {
+    char gnews[64];
+    char finnhub[64];
+};
+
+bool api_keys_valid(const ApiKeys& k);
 
 // The nvs partition is 0x5000 (20 KB) after the T-1.2 overlap fix and NVS
 // blobs are size-capped well below that; keep the whole store under 4 KB

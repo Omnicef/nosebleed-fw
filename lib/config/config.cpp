@@ -63,6 +63,23 @@ bool creds_valid(const Creds& c) {
     return true;
 }
 
+// T-10.3 — allowlist, not denylist: the value is concatenated into a
+// query string, so anything outside [A-Za-z0-9._-] is rejected rather than
+// escaped, and no encoder bug can ever be reachable. "" (unset) is valid —
+// the fetch code treats it as "source off", the store just never sees it.
+bool api_keys_valid(const ApiKeys& k) {
+    const auto field_ok = [](const char* s, size_t cap) {
+        for (size_t i = 0; i < cap && s[i] != '\0'; ++i) {
+            const char c = s[i];
+            const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                            (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_';
+            if (!ok) return false;
+        }
+        return strnlen(s, cap) < cap;
+    };
+    return field_ok(k.gnews, sizeof(k.gnews)) && field_ok(k.finnhub, sizeof(k.finnhub));
+}
+
 void set_defaults(Config& c) {
     std::memset(&c, 0, sizeof(c));
     c.magic = kMagic;
@@ -89,8 +106,20 @@ void set_defaults(Config& c) {
     c.hw.i2sspeed = 0;  // library default (80 MHz GPIO)
     c.hw.double_buff = 1;
 
+    // Services — weather off until a location is set, ticker lists are
+    // sane defaults, quiet hours off. Empty lat = no weather fetch.
+    c.svc.imperial = 0;
+    std::snprintf(c.svc.news_category, sizeof(c.svc.news_category), "general");
+    std::snprintf(c.svc.news_country, sizeof(c.svc.news_country), "us");
+    std::snprintf(c.svc.stock_symbols, sizeof(c.svc.stock_symbols), "AAPL,MSFT,NVDA,AMZN,GOOGL");
+    std::snprintf(c.svc.crypto_ids, sizeof(c.svc.crypto_ids), "bitcoin,ethereum,solana");
+    c.svc.quiet_enabled = 0;
+    c.svc.quiet_start = 22 * 60;
+    c.svc.quiet_end = 7 * 60;
+    c.svc.quiet_brightness = 0;
+
     // WidgetConfig rows
-    c.widget_count = 2 + kLeagueSlugCount;
+    c.widget_count = 3 + kLeagueSlugCount;
     WidgetConfig& splash = c.widgets[0];
     copy_str(splash.id, sizeof(splash.id), "boot_splash");
     copy_str(splash.type, kScoreboardTypeLen, "boot_splash");
@@ -103,8 +132,15 @@ void set_defaults(Config& c) {
     clock.order = 1;
     clock.enabled = 1;
     clock.dwell_s = 10.0f;
+    // T-10.2 weather card — present but off until the owner sets a location.
+    WidgetConfig& weather = c.widgets[2];
+    copy_str(weather.id, sizeof(weather.id), "weather");
+    copy_str(weather.type, kScoreboardTypeLen, "weather");
+    weather.order = 2;
+    weather.enabled = 0;
+    weather.dwell_s = 10.0f;
     for (int i = 0; i < kLeagueSlugCount; ++i) {
-        WidgetConfig& w = c.widgets[2 + i];
+        WidgetConfig& w = c.widgets[3 + i];
         scoreboard_order(i, w.league);  // _SCOREBOARD_LEAGUES order
         // Local buffer, then copy: writing w.id from w.league in one snprintf
         // trips gcc's -Wrestrict (both live in the same aggregate `c`); the
@@ -113,7 +149,7 @@ void set_defaults(Config& c) {
         std::snprintf(wid, sizeof(wid), "scoreboard_%s", w.league);
         copy_str(w.id, sizeof(w.id), wid);
         copy_str(w.type, kScoreboardTypeLen, "scoreboard");
-        w.order = static_cast<uint16_t>(2 + i);
+        w.order = static_cast<uint16_t>(3 + i);
         w.enabled = (i == 0) ? 1 : 0;  // only mlb
         w.dwell_s = 20.0f;
     }

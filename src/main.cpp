@@ -44,6 +44,7 @@ static void heartbeat(const char* name) {
 #include "espn_json.h"
 #include "font.h"
 #include "game.h"
+#include "info_cache.h"
 #include "local_time.h"
 #include "logos_esp.h"
 #include "logos_ota.h"
@@ -53,6 +54,7 @@ static void heartbeat(const char* name) {
 #include "scoreboard_widget.h"
 #include "scroll.h"
 #include "strip.h"
+#include "weather_json.h"
 #include "web.h"
 
 #if __has_include("secrets.h")
@@ -68,6 +70,7 @@ using nb::config::kLeagueSlugCount;
 using nb::config::kLeagueSlugs;
 
 static nb::data::DataCache* g_cache = nullptr;
+static nb::data::InfoCache g_info;  // weather + ticker (T-10.x); small, static
 static nb::render::StripHolder g_holder;
 static nb::render::StripBuilder g_builder;  // writer: poll task only
 static nb::render::ClockWidget* g_clock = nullptr;
@@ -364,8 +367,10 @@ static void task_render(void*) {
 static void task_poll(void*) {
     using namespace nb::data;
     static PollScheduler sch;
+    static InfoScheduler isch;  // T-10.x: weather + ticker, same task, same session rule
     while (time(nullptr) < 1700000000) vTaskDelay(pdMS_TO_TICKS(200));  // SNTP first (TLS)
     sch.reset(time(nullptr));
+    isch.reset(time(nullptr));
     for (;;) {
         // T-8.5: the poll task owns its own config copy. The shared g_cfg is
         // the RENDER task's (reloaded on save-notify); poll reloads once per
@@ -417,6 +422,26 @@ static void task_poll(void*) {
             Serial.printf("[poll] %s ok=%d wire=%u B\n", kLeagueSlugs[lg], ok,
                           static_cast<unsigned>(wire));
         }
+        // T-10.1 — weather: own deadline slot on the same scheduler clock,
+        // fetched only when the owner has set a location (empty lat = off).
+        // 900 s cadence; nothing on a panel needs weather faster. Fetched
+        // into a local first — a failed response never touches the slot,
+        // so the last-good Weather keeps rendering.
+        isch.set(info_src::kWeather, {pc.svc.lat[0] != '\0', 900, 900});
+        if (isch.due(info_src::kWeather, now)) {
+            char wurl[256];
+            bool wok = false;
+            if (weather_url(wurl, sizeof wurl, pc.svc.lat, pc.svc.lon, pc.svc.imperial != 0)) {
+                Weather w;
+                if (weather_fetch(wurl, w)) {
+                    *g_info.writable_weather() = w;
+                    g_info.publish_weather(static_cast<int64_t>(now));
+                    wok = true;
+                }
+            }
+            isch.done(info_src::kWeather, time(nullptr), false);
+            Serial.printf("[poll] weather ok=%d\n", wok);
+        }
         const int64_t now2 = time(nullptr);
         // T-9.5: logo atlas OTA — boot + daily, or on demand from
         // /api/logos/update. Runs here so fetches stay single-session.
@@ -437,7 +462,10 @@ static void task_poll(void*) {
             g_strip_key = key;
             boot_rebuild_strip(now2, pc);
         }
-        int64_t sleep_s = sch.next_wake(now2) - now2;
+        int64_t wake = sch.next_wake(now2);
+        const int64_t iwake = isch.next_wake(now2);  // T-10.1: info feeds share the sleep
+        if (iwake < wake) wake = iwake;
+        int64_t sleep_s = wake - now2;
         if (sleep_s < 1) sleep_s = 1;  // 1 s tick so per-minute clock keys rebuild promptly
         if (sleep_s > 30) sleep_s = 30;
         vTaskDelay(pdMS_TO_TICKS(1000 * sleep_s));

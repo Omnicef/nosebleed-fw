@@ -69,6 +69,12 @@ void settings_json(const config::Config& c, JsonDocument& d) {
     d["scroll_speed"] = hw.scroll_speed;
     d["card_gap"] = hw.card_gap;
     d["clock_24h"] = hw.clock_24h != 0;
+    // T-10.1 — weather location (empty lat = weather off). Public params
+    // only; the secret ticker keys live in a separate blob and are never
+    // serialised here.
+    d["weather_lat"] = c.svc.lat;
+    d["weather_lon"] = c.svc.lon;
+    d["weather_imperial"] = c.svc.imperial != 0;
 }
 
 long lclamp(long v, long lo, long hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -185,6 +191,15 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
     if (json["card_gap"].is<long>())
         c.hw.card_gap = static_cast<uint8_t>(lclamp(json["card_gap"], 0, 32));
     if (json["clock_24h"].is<bool>()) c.hw.clock_24h = json["clock_24h"].as<bool>() ? 1 : 0;
+
+    // T-10.1 — weather location. Stored verbatim; weather_url() re-validates
+    // (plain decimals) before anything is ever fetched, so a junk value here
+    // is inert — it just keeps the feature off.
+    if (json["weather_lat"].is<const char*>())
+        strlcpy(c.svc.lat, json["weather_lat"], sizeof c.svc.lat);
+    if (json["weather_lon"].is<const char*>())
+        strlcpy(c.svc.lon, json["weather_lon"], sizeof c.svc.lon);
+    if (json["weather_imperial"].is<bool>()) c.svc.imperial = json["weather_imperial"].as<bool>() ? 1 : 0;
 
     const bool structural = config::hw_structural_changed(old_hw, c.hw);
     if (!config::save(c)) {

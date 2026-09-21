@@ -1527,3 +1527,73 @@ repo `Omnicef/logos-test` is still up — `gh repo delete` needs the
 delete_repo scope; delete by hand. *(Deleted by hand 2026-09-21 — 404 +
 GraphQL "could not resolve" confirm it's gone; the raw-URL configured on
 the device was only ever a test fixture.)*
+
+---
+
+## Session start (2026-09-20) — Phase 10
+
+Scope: T-10.1 … T-10.6 (weather, ticker, scheduling). Panel DISCONNECTED —
+render-path acceptance is host-side (PNGs/goldens); on-panel confirmation
+defers to the bench. Marquee repo NOT available this session
+(`$MARQUEE_REPO` unset) and the weather/ticker layouts were never committed
+here — owner authorised a **fresh minimal design** for both widgets and the
+provider trio **Open-Meteo** (keyless) / **GNews** + **Finnhub** (keys →
+NVS, never GET, never logged) / **CoinGecko** (keyless). Every API shape
+was captured live (or from the vendor docs for the two keyed ones) — not
+from memory.
+
+## D-1 — frozen clock on period/clock cards (fixed before Phase 10)
+
+`cards_key` hashed `period`/`clock`/`status_display` only inside
+`if (has_situation)` — MLB/NFL kept a live-looking key while NHL/NBA/soccer
+cards drew a clock that only moved when something else changed the key.
+All three now hash for every game; the situation fields stay gated. A live
+game with a ticking clock rebuilds the strip once per poll (20 s live
+cadence) — rebuild is core-0, the render task never blinks; per PLAN the
+alternative is "a wrong clock", which is worse. The old host test *pinned
+the bug* ("clock tick changed cards_key" asserted stable) — inverted.
+
+## T-10.1 — weather client (host-verified; firmware builds)
+
+Open-Meteo `/v1/forecast`, live-captured shape 2026-09-20:
+`current.{temperature_2m,weather_code}` + `current_units.temperature_2m`
+("°F"/"°C" — UTF-8, take the LAST char) + `daily.{max,min}[0]`,
+`forecast_days=1`, `timezone=auto`, unit via `temperature_unit=`.
+Nesting depth 3 — checked per the AGENTS rule; `NestingLimit(20)` kept
+anyway. Split like ESPN: `weather_json.*` pure (filter, WMO→text table,
+`to_weather`, `weather_url`), `weather.cpp` the ARDUINO-only transport
+(tls_take → http_get → ReadBufferingStream, same chain as espn.cpp).
+
+* `InfoCache` (`lib/data/info_cache.h`): a `SeqSlot<T>` copy of the
+  proven DataCache protocol — deliberately not a refactor of
+  hardware-verified code. One real bug found by the new stress test:
+  `writable()` without a following `publish()` (an abandoned fill) flips
+  the seqlock parity, so the NEXT refill reads as stable mid-fill.
+  `writable()` now always lands odd. (DataCache carries the same latent
+  quirk — its callers uphold writable⇒publish by discipline, main.cpp
+  calls writable only after a successful fetch; left untouched.)
+* Poll task: `InfoScheduler` (PollScheduler templatized on N — leagues
+  keep `PollScheduler`, four info slots get `InfoScheduler`) runs the
+  weather slot on the same task/clock: 900 s cadence, armed only when the
+  weather widget is enabled AND lat/lon are set; fetch lands in a local
+  `Weather` and the slot is touched only on success ⇒ last-good by
+  construction. Sleep = min(league wake, info wake).
+* `weather_url` is an injection guard, not a formatter: `[0-9+.-]` max
+  15 chars with ≥1 digit or nothing is built (`39.9&key=`-style values
+  are tested red).
+* Config schema 1→2 (one bump now so Phase 10 never re-wipes NVS):
+  `Services` block (weather lat/lon/unit now; ticker lists and quiet
+  hours fields declared for T-10.3/10.5) + a disabled `weather` widget
+  row by default. `/api/settings` gained `weather_lat/lon/imperial` —
+  stored verbatim, re-validated at URL-build time, junk = feature off.
+* Host: decode of the live payload (72/75/66 °F, "Overcast"), filter
+  drops `timezone`/`generationtime_ms`, degraded payload → false, URL
+  guard, cache last-good + 50 000-snapshot writer stress. 40/40 native;
+  purity OK; `idf_build.sh firmware build` green.
+
+**Traps.** (1) `std::atomic<uint32_t>::store(memory_order_acq_rel)` is an
+*invalid* order (only RMWs take acq_rel) — libstdc++ asserts it only
+under assertions/TSan; a plain build silently misorders. The stress test
+found this, but the first red was my own test: the pre-thread fixture
+publish legitimately satisfies "last-good", so its values must obey the
+same-generation invariant the thread checks.

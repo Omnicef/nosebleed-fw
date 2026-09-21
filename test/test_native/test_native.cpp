@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <sstream>
 #include <ctime>
 #include <type_traits>
 #include <atomic>
@@ -28,8 +29,10 @@
 #include "espn_json.h"
 #include "config.h"
 #include "game.h"
+#include "info_cache.h"
 #include "timezone.h"
 #include "tzmap.h"
+#include "weather_json.h"
 #include "font.h"
 #include "font_data.h"
 #include "golden_clock.h"
@@ -375,17 +378,20 @@ static void test_config_defaults(void) {
     TEST_ASSERT_EQUAL_FLOAT(40.0f, c.hw.scroll_speed);
     TEST_ASSERT_EQUAL_UINT8(8, c.hw.card_gap);
     TEST_ASSERT_EQUAL_STRING("", c.hw.timezone);
-    // Widgets: boot_splash, clock, then 8 scoreboards (mlb first, rest sorted)
-    TEST_ASSERT_EQUAL_UINT16(10, c.widget_count);
+    // Widgets: boot_splash, clock, weather, then 8 scoreboards (mlb first,
+    // rest sorted). The weather card ships disabled until a location is set.
+    TEST_ASSERT_EQUAL_UINT16(11, c.widget_count);
     TEST_ASSERT_EQUAL_STRING("boot_splash", c.widgets[0].id);
     TEST_ASSERT_EQUAL_STRING("clock", c.widgets[1].id);
-    TEST_ASSERT_EQUAL_STRING("scoreboard_mlb", c.widgets[2].id);
-    TEST_ASSERT_EQUAL_UINT8(1, c.widgets[2].enabled);
-    TEST_ASSERT_EQUAL_STRING("mlb", c.widgets[2].league);
-    TEST_ASSERT_EQUAL_STRING("scoreboard_college-football", c.widgets[3].id);
+    TEST_ASSERT_EQUAL_STRING("weather", c.widgets[2].id);
+    TEST_ASSERT_EQUAL_UINT8(0, c.widgets[2].enabled);  // off until lat/lon set
+    TEST_ASSERT_EQUAL_STRING("scoreboard_mlb", c.widgets[3].id);
+    TEST_ASSERT_EQUAL_UINT8(1, c.widgets[3].enabled);
+    TEST_ASSERT_EQUAL_STRING("mlb", c.widgets[3].league);
+    TEST_ASSERT_EQUAL_STRING("scoreboard_college-football", c.widgets[4].id);
     TEST_ASSERT_EQUAL_STRING("scoreboard_womens-college-basketball",
                              c.widgets[c.widget_count - 1].id);  // longest id fits
-    for (uint16_t i = 3; i < c.widget_count; ++i)
+    for (uint16_t i = 4; i < c.widget_count; ++i)
         TEST_ASSERT_EQUAL_UINT8(0, c.widgets[i].enabled);
     // LeagueConfig: one row per slug, only mlb enabled, 20/120 cadence
     TEST_ASSERT_EQUAL_UINT16(kLeagueSlugCount, c.league_count);
@@ -871,7 +877,7 @@ static void test_data_poll_scheduler(void) {
     const int64_t t0 = 1000000;
 
     PollCfg live{true, 20, 120}, off{false, 20, 120};
-    for (int i = 0; i < PollScheduler::kLeagues; ++i) sch.set(i, off);
+    for (int i = 0; i < PollScheduler::kCount; ++i) sch.set(i, off);
     sch.set(0, live);
     sch.set(5, live);
     sch.reset(t0);
@@ -911,6 +917,117 @@ static void test_data_poll_scheduler(void) {
     TEST_ASSERT_TRUE(sch.due(2, t0 + 130));
     sch.done(2, t0 + 130, true);        // live cadence from here
     TEST_ASSERT_TRUE(sch.due(2, t0 + 150));
+
+    // T-10.1 — the info scheduler is the same machine over 4 slots
+    // (weather/news/stocks/crypto), same stagger and wake arithmetic.
+    InfoScheduler isch;
+    isch.reset(t0);
+    isch.set(info_src::kWeather, live);
+    TEST_ASSERT_TRUE(isch.due(info_src::kWeather, t0));
+    isch.done(info_src::kWeather, t0, false);
+    TEST_ASSERT_EQUAL_INT64(t0 + live.idle_s, isch.next_wake(t0 + 1));
+}
+
+// T-10.1 — weather decode over the real Open-Meteo response shape
+// (captured live 2026-09-20, Philadelphia in °F), through the device's
+// exact filter + NestingLimit(20) path; plus the URL builder's injection
+// guard. No fixture file — the whole payload fits in the test.
+static void test_data_weather(void) {
+    using namespace nb::data;
+    static const char* kPayload =
+        "{\"latitude\":39.96188,\"longitude\":-75.15539,\"generationtime_ms\":0.156879,"
+        "\"utc_offset_seconds\":-14400,\"timezone\":\"America/New_York\","
+        "\"timezone_abbreviation\":\"GMT-4\",\"elevation\":32.0,"
+        "\"current_units\":{\"time\":\"iso8601\",\"interval\":\"seconds\","
+        "\"temperature_2m\":\"°F\",\"weather_code\":\"wmo code\"},"
+        "\"current\":{\"time\":\"2026-09-20T22:00\",\"interval\":900,"
+        "\"temperature_2m\":72.1,\"weather_code\":3},"
+        "\"daily_units\":{\"time\":\"iso8601\",\"temperature_2m_max\":\"°F\","
+        "\"temperature_2m_min\":\"°F\"},"
+        "\"daily\":{\"time\":[\"2026-09-20\"],\"temperature_2m_max\":[74.8],"
+        "\"temperature_2m_min\":[65.6]}}";
+
+    JsonDocument filter;
+    build_weather_filter(filter);
+    JsonDocument doc;
+    std::istringstream in(kPayload);
+    const DeserializationError err = parse_weather(in, filter, doc);
+    TEST_ASSERT_FALSE_MESSAGE(static_cast<bool>(err), err.c_str());
+    TEST_ASSERT_TRUE_MESSAGE(doc["timezone"].isNull(), "filter must drop metadata");
+    TEST_ASSERT_TRUE(doc["generationtime_ms"].isNull());
+
+    Weather w{};
+    TEST_ASSERT_TRUE(to_weather(doc, w));
+    TEST_ASSERT_EQUAL_INT16(72, w.temp);  // 72.1
+    TEST_ASSERT_EQUAL_INT16(75, w.high);  // 74.8
+    TEST_ASSERT_EQUAL_INT16(66, w.low);   // 65.6
+    TEST_ASSERT_EQUAL_CHAR('F', w.unit);  // last char of "°F"
+    TEST_ASSERT_EQUAL_STRING("Overcast", w.cond);
+
+    // Degradation: an absent or current-less payload decodes to nothing —
+    // the caller keeps last-good rather than drawing a zero card.
+    Weather junk_out{};
+    JsonDocument empty;
+    TEST_ASSERT_FALSE(to_weather(empty.as<JsonVariantConst>(), junk_out));
+    JsonDocument meta_only;
+    deserializeJson(meta_only, "{\"latitude\":39.9,\"timezone\":\"UTC\"}");
+    TEST_ASSERT_FALSE(to_weather(meta_only, junk_out));
+
+    // URL: plain coords assemble; anything that could re-shape the query
+    // string (or an empty location) never reaches the wire.
+    char url[256];
+    TEST_ASSERT_TRUE(weather_url(url, sizeof url, "39.9526", "-75.1652", true));
+    TEST_ASSERT_NOT_NULL(strstr(url, "latitude=39.9526"));
+    TEST_ASSERT_NOT_NULL(strstr(url, "temperature_unit=fahrenheit"));
+    TEST_ASSERT_FALSE(weather_url(url, sizeof url, "39.9&apikey=x", "-75.1", true));
+    TEST_ASSERT_FALSE(weather_url(url, sizeof url, "", "", false));
+    TEST_ASSERT_FALSE(weather_url(url, sizeof url, "39 9", "-75", false));
+    TEST_ASSERT_FALSE(weather_url(url, sizeof url, "39.9; rm -r /", "-75", false));
+}
+
+// T-10.1 — InfoCache: last-good by construction (an aborted fill never
+// publishes), plus a mini writer/reader stress proving the copied seqlock
+// protocol keeps whole-Weather snapshots consistent under contention.
+static void test_info_cache_weather(void) {
+    using namespace nb::data;
+    static InfoCache cache;
+    Weather got{};
+    TEST_ASSERT_FALSE(cache.snapshot_weather(&got));  // nothing published yet
+
+    Weather* w = cache.writable_weather();
+    w->temp = 71;
+    w->high = 71;  // the stress phase's high==temp invariant predates the thread
+    w->low = 60;
+    w->unit = 'F';
+    data::copy_str(w->cond, sizeof w->cond, "Fog");
+    cache.publish_weather(1000);
+    TEST_ASSERT_TRUE(cache.snapshot_weather(&got));
+    TEST_ASSERT_EQUAL_INT16(71, got.temp);
+    TEST_ASSERT_EQUAL_INT64(1000, got.fetched_utc);
+
+    Weather* d = cache.writable_weather();  // a fetch that starts and fails
+    d->temp = 99;                           // ... never publishes
+    TEST_ASSERT_TRUE(cache.snapshot_weather(&got));
+    TEST_ASSERT_EQUAL_INT16(71, got.temp);  // last-good untouched
+    TEST_ASSERT_EQUAL_INT64(1000, got.fetched_utc);
+
+    std::atomic<bool> stop{false}, bad{false};
+    std::thread wr([&] {
+        for (int gen = 1; !stop.load(std::memory_order_relaxed); ++gen) {
+            const auto v = static_cast<int16_t>(gen % 30000);
+            Weather* p = cache.writable_weather();
+            p->temp = v;
+            p->high = v;  // same-generation invariant
+            cache.publish_weather(gen);
+        }
+    });
+    for (int i = 0; i < 50000 && !bad.load(); ++i) {
+        Weather s{};
+        if (cache.snapshot_weather(&s) && s.high != s.temp) bad.store(true);
+    }
+    stop.store(true);
+    wr.join();
+    TEST_ASSERT_FALSE_MESSAGE(bad.load(), "torn Weather snapshot");
 }
 
 static bool fixed_local(void* ctx, int64_t, render::LocalTime& out) {
@@ -1697,6 +1814,8 @@ int main(void) {
     RUN_TEST(test_data_norm_golden);
     RUN_TEST(test_data_date_window);
     RUN_TEST(test_data_poll_scheduler);
+    RUN_TEST(test_data_weather);
+    RUN_TEST(test_info_cache_weather);
     RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
     RUN_TEST(test_compute_pages);
