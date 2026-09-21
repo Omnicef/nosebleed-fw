@@ -478,6 +478,7 @@ The Python's algorithm is correct as written. Port it faithfully rather than rei
 *Accept:* seamless loop with a `panel_w` black lead-in; 4 KB copied per frame, ~120 KB/s at 30 fps.
 
 > ⚠️ **Write every panel cell every frame.** The Python allocates a fresh `new_frame()` each iteration, so unwritten pixels are black by construction. **This firmware blits into a persistent DMA framebuffer** — any cell you skip keeps the previous frame's value. T-2.8 hit this: the splash blit wrote only the clipped canvas rect, and every column past the canvas edge smeared frozen fragments of the last frame during the traverse.
+> **This means every blit must be COMPLETE. It does not mean you must blit every frame** — skipping a frame leaves the last *complete* image in the framebuffer, which the DMA keeps scanning correctly. See T-12.6.
 > Host tests cannot catch it — they compare a freshly-allocated `Canvas16` against Pillow, where the bug does not exist. Blit the full `panel_w × panel_h`, reading off-canvas as black through the bounds-checked accessor. At 2048 cells × 30 fps this is 61 k writes/s — free.
 
 **T-7.4 — Static paging mode.** `compute_pages` from block widths; 5 s dwell per page.
@@ -622,6 +623,17 @@ MLB diamond, NFL gridiron, period/clock.
 acceptance criterion, and it cannot be judged from a 4× PNG.
 
 **T-12.5 — Commit.** `Phase 12: card redesign`
+
+
+**T-12.6 — Scroll speed range and adaptive pacing.**
+
+*Range.* The clamp is 10–200 px/s and the usable band is 10–20; at 200 the text is unreadable **and** juddery (6.7 px/frame at 30 fps). **Lower the ceiling to 80** — 2.67 px/frame, fast but still legible, and it keeps 30 fps justified at the top of the range. Change the clamp in `lib/web/web.cpp` and the `max` on the SPA input together, or the UI will offer a value the firmware silently rejects.
+
+*Adaptive pacing.* The scroll window is an integer x. At 10 px/s it changes 10 times a second while the render task pushes 30 frames — **two thirds of the blits are byte-identical**. Skip the blit when `w0` is unchanged and there was no strip commit, page change or config apply. Self-tuning: ~10 blits/s at 10 px/s, 30 at 80, and near-zero in static mode where nothing moves for the whole dwell.
+
+> This is **not** a T-7.3 violation. That rule forbids *partial* blits, which leave stale columns. A skipped frame leaves the last complete image, which is correct.
+
+*Accept:* legible at 80 px/s on the panel; blit count per second tracks scroll speed; static mode blits only on page change or commit; no smearing at any speed.
 
 
 ## §4a Open defects
