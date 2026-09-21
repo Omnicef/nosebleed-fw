@@ -65,8 +65,21 @@ class ScoreboardWidget : public CardProducer {
             hash_char(&h, ':');
             hash_int(&h, g.home_score);
             hash_char(&h, ':');
+            // D-1 (PLAN §4a): period/clock/status_display are DRAWN on every
+            // live card but were only hashed when a situation existed, so the
+            // clock froze on NHL/NBA/soccer cards. Hashed unconditionally now:
+            // a live game with a running clock rebuilds the strip once per
+            // poll. The rebuild runs on core 0 and the render task never
+            // blinks — a per-poll rebuild is the accepted cost of a clock
+            // that is not wrong. Pre/final games carry constant text here.
+            hash_int(&h, g.period);
+            hash_char(&h, '/');
+            hash_str(&h, g.clock);
+            hash_char(&h, '/');
+            hash_str(&h, g.status_display);
             if (g.has_situation) {
                 const data::Situation& s = g.situation;
+                hash_char(&h, '/');
                 hash_int(&h, s.balls);
                 hash_char(&h, '/');
                 hash_int(&h, s.strikes);
@@ -78,10 +91,6 @@ class ScoreboardWidget : public CardProducer {
                 hash_int(&h, s.on_second);
                 hash_char(&h, '/');
                 hash_int(&h, s.on_third);
-                hash_char(&h, '/');
-                hash_int(&h, g.period);
-                hash_char(&h, '/');
-                hash_str(&h, g.status_display);
             }
             hash_char(&h, '|');
         }

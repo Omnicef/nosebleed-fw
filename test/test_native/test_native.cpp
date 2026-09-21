@@ -1374,7 +1374,11 @@ static void test_scoreboard_widget(void) {
     w->games[0].situation.outs = 0;
     std::snprintf(w->games[0].clock, sizeof w->games[0].clock, "0:31");
     cache.publish(league, 4000);
-    TEST_ASSERT_EQUAL_UINT32_MESSAGE(sit_key, widget.cards_key(1000), "clock tick changed cards_key");
+    // D-1 (PLAN §4a), inverted: the live clock is drawn on the card, so a
+    // clock tick MUST change the key now — the strip has to re-render or the
+    // panel shows a frozen clock. The rebuild is core-0 and poll-paced.
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(sit_key, widget.cards_key(1000),
+                                  "D-1: clock tick did not change cards_key (frozen clock)");
 
     w = cache.writable(league);
     w->count = 0;
