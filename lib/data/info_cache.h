@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 
+#include "ticker.h"
 #include "weather.h"
 
 namespace nb {
@@ -67,12 +68,21 @@ template <typename T> class SeqSlot {
 
 class InfoCache {
   public:
+    static constexpr int kTickers = 3;  // info_src order: news, stocks, crypto
+
     Weather* writable_weather() { return weather_.writable(); }
     void publish_weather(int64_t now_utc) { weather_.publish(now_utc); }
     bool snapshot_weather(Weather* dst) const { return weather_.snapshot(dst); }
 
+    // src: info_src::kNews/kStocks/kCrypto (poll.h). Callers pass the same
+    // index everywhere; no shared enum include to avoid a poll.h cycle.
+    TickerList* writable_ticker(int src) { return tickers_[src].writable(); }
+    void publish_ticker(int src, int64_t now_utc) { tickers_[src].publish(now_utc); }
+    bool snapshot_ticker(int src, TickerList* dst) const { return tickers_[src].snapshot(dst); }
+
   private:
     SeqSlot<Weather> weather_;
+    SeqSlot<TickerList> tickers_[kTickers];
 };
 
 }  // namespace data

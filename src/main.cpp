@@ -55,6 +55,7 @@ static void heartbeat(const char* name) {
 #include "scoreboard_widget.h"
 #include "scroll.h"
 #include "strip.h"
+#include "ticker_json.h"
 #include "weather_json.h"
 #include "web.h"
 
@@ -97,6 +98,14 @@ static int league_of_slug(const char* slug) {
 }
 
 static void boot_apply_favorites(const nb::config::Config& cfg);
+
+// T-10.3 — is a carousel row of this type switched on? Also gates the POLL
+// side: a configured-but-hidden info widget must not keep fetching.
+static bool widget_row_enabled(const nb::config::Config& cfg, const char* type) {
+    for (int i = 0; i < cfg.widget_count; ++i)
+        if (std::strcmp(cfg.widgets[i].type, type) == 0) return cfg.widgets[i].enabled != 0;
+    return false;
+}
 
 // Producers are constructed once (one clock, one scoreboard per known
 // league) and ordered per pass by boot_order_producers(). T-8.5: the strip
@@ -431,11 +440,13 @@ static void task_poll(void*) {
                           static_cast<unsigned>(wire));
         }
         // T-10.1 — weather: own deadline slot on the same scheduler clock,
-        // fetched only when the owner has set a location (empty lat = off).
+        // fetched only when the weather widget row is enabled (T-10.3: the
+        // gate moved from "lat set" to the carousel switch — configuring a
+        // location without showing the card must not keep polling).
         // 900 s cadence; nothing on a panel needs weather faster. Fetched
         // into a local first — a failed response never touches the slot,
         // so the last-good Weather keeps rendering.
-        isch.set(info_src::kWeather, {pc.svc.lat[0] != '\0', 900, 900});
+        isch.set(info_src::kWeather, {widget_row_enabled(pc, "weather"), 900, 900});
         if (isch.due(info_src::kWeather, now)) {
             char wurl[256];
             bool wok = false;
@@ -449,6 +460,48 @@ static void task_poll(void*) {
             }
             isch.done(info_src::kWeather, time(nullptr), false);
             Serial.printf("[poll] weather ok=%d\n", wok);
+        }
+        // T-10.3 — ticker sources: one slot, one deadline, one fetch each.
+        // A source's failure only ever skips its own publish, so a dead
+        // news feed never takes the crypto board down with it. All three
+        // run on this task, sequentially — still one TLS session at a time.
+        nb::config::ApiKeys keys;
+        nb::config::load_keys(keys);  // tiny NVS blob; poll task is the only reader
+        struct { const char* widget; const char* param; } tsrc[] = {
+            {"news", keys.gnews}, {"stocks", keys.finnhub}, {"crypto", ""}};
+        for (int ti = 0; ti < 3; ++ti) {
+            const int src = info_src::kNews + ti;
+            const bool armed = widget_row_enabled(pc, tsrc[ti].widget) &&
+                               (ti == 2 || tsrc[ti].param[0] != '\0');  // keyed srcs need keys
+            isch.set(src, {armed, 900, 900});
+            if (!isch.due(src, now)) continue;
+            TickerList tl;
+            bool tok = false;
+            if (ti == 0) {  // news
+                char url[256];
+                if (news_url(url, sizeof url, pc.svc.news_category, pc.svc.news_country,
+                             keys.gnews) &&
+                    news_fetch(url, tl)) {
+                    tok = true;
+                }
+            } else if (ti == 1) {  // stocks — per-symbol GETs inside
+                if (pc.svc.stock_symbols[0] != '\0' &&
+                    stocks_fetch(pc.svc.stock_symbols, keys.finnhub, tl)) {
+                    tok = true;
+                }
+            } else {  // crypto — keyless, ids list is the gate
+                char url[256];
+                if (coin_url(url, sizeof url, pc.svc.crypto_ids) &&
+                    coins_fetch(url, pc.svc.crypto_ids, tl)) {
+                    tok = true;
+                }
+            }
+            if (tok) {
+                *g_info.writable_ticker(ti) = tl;
+                g_info.publish_ticker(ti, static_cast<int64_t>(now));
+            }
+            isch.done(src, time(nullptr), false);
+            Serial.printf("[poll] ticker%d ok=%d\n", ti, tok);
         }
         const int64_t now2 = time(nullptr);
         // T-9.5: logo atlas OTA — boot + daily, or on demand from

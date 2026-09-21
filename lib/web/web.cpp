@@ -75,6 +75,12 @@ void settings_json(const config::Config& c, JsonDocument& d) {
     d["weather_lat"] = c.svc.lat;
     d["weather_lon"] = c.svc.lon;
     d["weather_imperial"] = c.svc.imperial != 0;
+    // T-10.3 — ticker lists are config (non-secret); the KEYS themselves
+    // are never in Config and never appear in this document.
+    d["news_category"] = c.svc.news_category;
+    d["news_country"] = c.svc.news_country;
+    d["stock_symbols"] = c.svc.stock_symbols;
+    d["crypto_ids"] = c.svc.crypto_ids;
 }
 
 long lclamp(long v, long lo, long hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -201,6 +207,17 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
         strlcpy(c.svc.lon, json["weather_lon"], sizeof c.svc.lon);
     if (json["weather_imperial"].is<bool>()) c.svc.imperial = json["weather_imperial"].as<bool>() ? 1 : 0;
 
+    // T-10.3 — ticker lists. Stored verbatim; the URL builders re-validate
+    // every token at fetch time, so junk here is inert (source stays off).
+    if (json["news_category"].is<const char*>())
+        strlcpy(c.svc.news_category, json["news_category"], sizeof c.svc.news_category);
+    if (json["news_country"].is<const char*>())
+        strlcpy(c.svc.news_country, json["news_country"], sizeof c.svc.news_country);
+    if (json["stock_symbols"].is<const char*>())
+        strlcpy(c.svc.stock_symbols, json["stock_symbols"], sizeof c.svc.stock_symbols);
+    if (json["crypto_ids"].is<const char*>())
+        strlcpy(c.svc.crypto_ids, json["crypto_ids"], sizeof c.svc.crypto_ids);
+
     const bool structural = config::hw_structural_changed(old_hw, c.hw);
     if (!config::save(c)) {
         request->send(500, "application/json", "{\"error\":\"config save failed\"}");
@@ -213,8 +230,32 @@ void handle_settings_put(AsyncWebServerRequest* request, JsonVariant& json) {
     send_json(request, 200, d);
 }
 
-void handle_system_get(AsyncWebServerRequest* request) {
+// POST /api/keys — the sole writer of the ticker API keys. Absent keys
+// keep their stored values; "" unsets. The response carries presence
+// flags only: no route ever serialises these values back out.
+void handle_keys_post(AsyncWebServerRequest* request, JsonVariant& json) {
+    if (!json.is<JsonObject>()) {
+        request->send(400, "application/json", "{\"error\":\"expected a JSON object\"}");
+        return;
+    }
+    config::ApiKeys k;
+    config::load_keys(k);
+    if (json["gnews"].is<const char*>())
+        strlcpy(k.gnews, json["gnews"], sizeof k.gnews);
+    if (json["finnhub"].is<const char*>())
+        strlcpy(k.finnhub, json["finnhub"], sizeof k.finnhub);
+    if (!config::save_keys(k)) {  // api_keys_valid rejected the charset
+        request->send(400, "application/json", "{\"error\":\"invalid key\"}");
+        return;
+    }
+    Serial.printf("[web] api keys saved\n");  // values never printed
     JsonDocument d;
+    d["gnews_key_set"] = k.gnews[0] != '\0';
+    d["finnhub_key_set"] = k.finnhub[0] != '\0';
+    send_json(request, 200, d);
+}
+
+void handle_system_get(AsyncWebServerRequest* request) {    JsonDocument d;
     d["ip"] = WiFi.localIP().toString();
     d["uptime_s"] = static_cast<uint32_t>(millis() / 1000);
     d["free_heap"] = internal_free();
@@ -619,6 +660,12 @@ bool init() {
                 config::load(c);
                 JsonDocument d;
                 settings_json(c, d);
+                // Presence flags only — POST /api/keys is the sole writer,
+                // and nothing here can echo a stored key.
+                config::ApiKeys k;
+                config::load_keys(k);
+                d["gnews_key_set"] = k.gnews[0] != '\0';
+                d["finnhub_key_set"] = k.finnhub[0] != '\0';
                 send_json(request, 200, d);
             });
     auto* settings_put = new (std::nothrow)
@@ -627,6 +674,14 @@ bool init() {
         settings_put->setMethod(AsyncWebRequestMethod::HTTP_PUT);
         settings_put->setMaxContentLength(1024);
         srv->addHandler(settings_put);
+    }
+    // T-10.3 — ticker keys writer (presence-only on the way back out).
+    auto* keys_post = new (std::nothrow)
+        AsyncCallbackJsonWebHandler(AsyncURIMatcher::exact("/api/keys"), handle_keys_post);
+    if (keys_post != nullptr) {
+        keys_post->setMethod(AsyncWebRequestMethod::HTTP_POST);
+        keys_post->setMaxContentLength(512);
+        srv->addHandler(keys_post);
     }
     srv->on(AsyncURIMatcher::exact("/api/system"), AsyncWebRequestMethod::HTTP_GET,
             handle_system_get);

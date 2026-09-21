@@ -167,6 +167,68 @@
         <span class="text-sm">24-hour clock <span class="text-gray-500 text-xs">(applies live)</span></span>
       </label>
 
+      <div class="col-span-2 pt-2 border-t border-gray-800 text-xs uppercase tracking-wide text-gray-500">Weather</div>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Latitude</span>
+        <input type="text" maxlength="15" placeholder="39.95" x-model.trim="form.weather_lat"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Longitude</span>
+        <input type="text" maxlength="15" placeholder="-75.16" x-model.trim="form.weather_lon"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex items-center gap-2 col-span-2 cursor-pointer">
+        <input type="checkbox" x-model="form.weather_imperial" class="accent-amber-400 w-4 h-4">
+        <span class="text-sm">°F <span class="text-gray-500 text-xs">(uncheck for °C)</span></span>
+      </label>
+
+      <div class="col-span-2 pt-2 border-t border-gray-800 text-xs uppercase tracking-wide text-gray-500">Tickers</div>
+
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">News category</span>
+        <select x-model="form.news_category"
+                class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+          <option>general</option><option>business</option><option>entertainment</option>
+          <option>health</option><option>science</option><option>sports</option><option>technology</option>
+        </select>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">News country <span class="text-gray-500">(2-letter)</span></span>
+        <input type="text" maxlength="2" minlength="2" x-model.trim.lower="form.news_country"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Stock symbols <span class="text-gray-500">(≤4, comma-separated)</span></span>
+        <input type="text" maxlength="48" placeholder="AAPL,MSFT" x-model.trim="form.stock_symbols"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-gray-400">Crypto ids <span class="text-gray-500">(CoinGecko, ≤10)</span></span>
+        <input type="text" maxlength="48" placeholder="bitcoin,ethereum" x-model.trim="form.crypto_ids"
+               class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+      </label>
+
+      <div class="col-span-2 space-y-2">
+        <p class="text-xs text-gray-500">API keys are stored on the device only — never read back. Saving a blank field clears that key.</p>
+        <div class="grid grid-cols-2 gap-2">
+          <input type="password" autocomplete="off" x-model.trim="keyForm.gnews"
+                 :placeholder="keySet.gnews ? 'GNews key (set)' : 'GNews key (unset)'"
+                 class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+          <input type="password" autocomplete="off" x-model.trim="keyForm.finnhub"
+                 :placeholder="keySet.finnhub ? 'Finnhub key (set)' : 'Finnhub key (unset)'"
+                 class="bg-gray-900 border border-gray-700 rounded px-2 py-1 focus:outline-none focus:border-amber-500">
+        </div>
+        <div class="flex items-center gap-3">
+          <button type="button" @click="saveKeys()"
+                  class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1.5 rounded text-sm transition-colors">
+            Save keys
+          </button>
+          <span class="text-xs text-amber-300" x-text="keysMsg"></span>
+        </div>
+      </div>
+
       <div class="col-span-2 flex justify-end">
         <button type="submit"
                 class="bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2 rounded transition-colors">
@@ -361,7 +423,13 @@ function settings() {
       rows: 32, cols: 64, chain_length: 1, parallel: 1,
       brightness: 80, boot_splash_duration: 15, timezone: '',
       display_mode: 'scroll', scroll_speed: 40, card_gap: 8, clock_24h: false,
+      weather_lat: '', weather_lon: '', weather_imperial: false,
+      news_category: 'general', news_country: 'us',
+      stock_symbols: '', crypto_ids: '',
     },
+    keyForm: { gnews: '', finnhub: '' },
+    keySet: { gnews: false, finnhub: false },
+    keysMsg: '',
     saved: false,
     restartBanner: false,
     error: null,
@@ -379,8 +447,35 @@ function settings() {
           scroll_speed: d.scroll_speed ?? 40,
           card_gap: d.card_gap ?? 8,
           clock_24h: d.clock_24h ?? false,
+          weather_lat: d.weather_lat ?? '', weather_lon: d.weather_lon ?? '',
+          weather_imperial: d.weather_imperial ?? false,
+          news_category: d.news_category ?? 'general',
+          news_country: d.news_country ?? 'us',
+          stock_symbols: d.stock_symbols ?? '', crypto_ids: d.crypto_ids ?? '',
         });
+        this.keySet = { gnews: !!d.gnews_key_set, finnhub: !!d.finnhub_key_set };
       } catch(e) { this.error = 'Could not load settings: ' + e.message; }
+    },
+    async saveKeys() {
+      this.keysMsg = '';
+      const body = {};
+      // A blank box means "clear this key" — send '' only if the key was
+      // set; never POST a value the user just watched sit in the box.
+      if (this.keyForm.gnews || this.keySet.gnews) body.gnews = this.keyForm.gnews;
+      if (this.keyForm.finnhub || this.keySet.finnhub) body.finnhub = this.keyForm.finnhub;
+      try {
+        const r = await fetch('/api/keys', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error((await r.json()).error || r.status);
+        const d = await r.json();
+        this.keySet = { gnews: d.gnews_key_set, finnhub: d.finnhub_key_set };
+        this.keyForm = { gnews: '', finnhub: '' };
+        this.keysMsg = 'Saved.';
+      } catch(e) { this.keysMsg = 'Failed: ' + e.message; }
+      setTimeout(() => { this.keysMsg = ''; }, 3000);
     },
     async save() {
       this.saved = false; this.restartBanner = false; this.error = null;

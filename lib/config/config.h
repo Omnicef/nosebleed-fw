@@ -22,7 +22,7 @@ namespace nb {
 namespace config {
 
 constexpr uint32_t kMagic = 0x4E424346;  // "NBCF" little-endian
-constexpr uint16_t kSchemaVersion = 2;   // v2: Services block + info widgets (Phase 10)
+constexpr uint16_t kSchemaVersion = 3;   // v3: ticker widget rows (Phase 10)
 
 constexpr size_t kLeagueIdLen = 26;   // "womens-college-basketball" + NUL
 constexpr size_t kWidgetIdLen = 40;   // "scoreboard_womens-college-basketball" + NUL

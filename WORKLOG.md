@@ -1621,3 +1621,39 @@ new widget didn't share — and key-moves-on-temp-change). Wired into the
 producer set: `kMaxProducers = leagues + 5` sized once for the T-10.4
 tickers. 41/41 native; purity OK; firmware green (`hl[16]` → `hl[24]` for
 the int16-min H/L strings under -Werror=format-truncation).
+
+## T-10.3 — ticker sources: GNews / Finnhub / CoinGecko
+
+Data layer split like weather: `ticker.h` (display-ready POD — 12-glyph
+fields = the card width, so the widget can't clip), `ticker_json.*` pure
+decoders + URL guards, ARDUINO tail inside the same file (one
+`fetch_filtered` chain). CoinGecko shape **live-captured** (incl. its
+`4.0e-06` micro-cap → `%g`); `/everything` 404s — the live path is
+`top-headlines`, which a bogus key answers `{"errors":[…]}` 400. GNews and
+Finnhub success shapes are **vendor-docs-only fixtures** (a real capture
+needs the owner's keys) — flagged here deliberately; the decoders must be
+re-verified the day a key goes in.
+
+* `InfoCache` grew three `SeqSlot<TickerList>` (news/stocks/crypto).
+  Independence is structural: every slot publishes only after its own
+  fetch succeeds; a `c:0` Finnhub symbol, a dead feed or a keyless source
+  skips its own publish and leaves its last-good list (host-tested).
+* Poll: `widget_row_enabled(cfg,type)` gates ALL info polls now — including
+  weather, whose gate was "lat set": configuring a location while the card
+  is hidden no longer keeps a third party polled forever. Stocks run
+  sequential per-symbol GETs (≤4) inside the poll task — still one TLS
+  session at a time. `stocks_fetch` partial success keeps the good symbols.
+* `ApiKeys` NVS blob "keys" with the T-9.2 Creds discipline: `POST
+  /api/keys` is the sole writer, `GET /api/settings` answers presence
+  flags only, nothing prints values, `api_keys_valid` allowlists
+  `[A-Za-z0-9._-]` (the keys ride in query strings — the charset is an
+  injection guard first, hygiene second). URL builders re-check anyway.
+* Schema 2→3 (three disabled default rows: news/stocks/crypto; ≤4 stock
+  default to match the per-cycle request cap). SPA settings screen grew
+  weather + ticker fields and a keys form (blank-clears; values never
+  round-trip).
+* Traps: `DeserializationError::c_str()` on success is "Ok" not "";
+  gcc `-Werror=format-truncation` audits `%.0f`-into-13 (raw[16]→raw[13]).
+* 42/42 native (new: live CoinGecko decode incl. comma format + micro-cap,
+  doc-shape news wrap/finnhub fallback + c:0 reject, 12 URL-guard cases,
+  key charset, slot isolation); purity OK; firmware green.

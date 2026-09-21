@@ -30,6 +30,8 @@
 #include "config.h"
 #include "game.h"
 #include "info_cache.h"
+#include "ticker.h"
+#include "ticker_json.h"
 #include "timezone.h"
 #include "tzmap.h"
 #include "weather_json.h"
@@ -381,8 +383,8 @@ static void test_config_defaults(void) {
     TEST_ASSERT_EQUAL_UINT8(8, c.hw.card_gap);
     TEST_ASSERT_EQUAL_STRING("", c.hw.timezone);
     // Widgets: boot_splash, clock, weather, then 8 scoreboards (mlb first,
-    // rest sorted). The weather card ships disabled until a location is set.
-    TEST_ASSERT_EQUAL_UINT16(11, c.widget_count);
+    // rest sorted), then 3 ticker rows. Info widgets ship disabled.
+    TEST_ASSERT_EQUAL_UINT16(14, c.widget_count);
     TEST_ASSERT_EQUAL_STRING("boot_splash", c.widgets[0].id);
     TEST_ASSERT_EQUAL_STRING("clock", c.widgets[1].id);
     TEST_ASSERT_EQUAL_STRING("weather", c.widgets[2].id);
@@ -392,7 +394,10 @@ static void test_config_defaults(void) {
     TEST_ASSERT_EQUAL_STRING("mlb", c.widgets[3].league);
     TEST_ASSERT_EQUAL_STRING("scoreboard_college-football", c.widgets[4].id);
     TEST_ASSERT_EQUAL_STRING("scoreboard_womens-college-basketball",
-                             c.widgets[c.widget_count - 1].id);  // longest id fits
+                             c.widgets[3 + kLeagueSlugCount - 1].id);  // longest id fits
+    TEST_ASSERT_EQUAL_STRING("news", c.widgets[3 + kLeagueSlugCount].id);      // T-10.3
+    TEST_ASSERT_EQUAL_STRING("stocks", c.widgets[4 + kLeagueSlugCount].id);
+    TEST_ASSERT_EQUAL_STRING("crypto", c.widgets[5 + kLeagueSlugCount].id);
     for (uint16_t i = 4; i < c.widget_count; ++i)
         TEST_ASSERT_EQUAL_UINT8(0, c.widgets[i].enabled);
     // LeagueConfig: one row per slug, only mlb enabled, 20/120 cadence
@@ -1419,6 +1424,106 @@ static bool canvas_has_ink(const Canvas16& c) {
 // T-10.2 — weather card pixel parity vs the golden + behaviour: hidden
 // before first fetch and when disabled, key stable across `now`, key moves
 // on a temperature change.
+// T-10.3 — ticker decoders and URL guards. CoinGecko fixture is a live
+// capture; GNews/Finnhub shapes are vendor docs (live success needs keys).
+static void test_ticker_decoders(void) {
+    using namespace nb::data;
+
+    // --- CoinGecko (live capture 2026-09-20, incl. the 4.0e-06 micro-cap)
+    JsonDocument coin;
+    TEST_ASSERT_EQUAL_STRING(
+        "Ok", deserializeJson(coin, R"({"bitcoin":{"usd":81268,"usd_24h_change":1.1470199302818527},)"
+            R"("ethereum":{"usd":2659.57,"usd_24h_change":3.0378251402871923},)"
+            R"("pepe":{"usd":4.0e-06,"usd_24h_change":1.578981888964992}})")
+            .c_str());
+    TickerList tl{};
+    TEST_ASSERT_TRUE(to_coins(coin, "bitcoin,ethereum,pepe", tl));
+    TEST_ASSERT_EQUAL_INT(3, tl.count);
+    TEST_ASSERT_EQUAL_STRING("bitcoin", tl.items[0].label);
+    TEST_ASSERT_EQUAL_STRING("81,268", tl.items[0].l1);
+    TEST_ASSERT_EQUAL_STRING("+1.1%", tl.items[0].l2);
+    TEST_ASSERT_EQUAL_STRING("2,660", tl.items[1].l1);  // >=1000 rounds to whole units
+    TEST_ASSERT_EQUAL_STRING("4e-06", tl.items[2].l1);
+    TEST_ASSERT_TRUE(to_coins(coin, "ethereum,nonexistent-xyz", tl));  // missing id skipped
+    TEST_ASSERT_EQUAL_INT(1, tl.count);
+    TEST_ASSERT_FALSE(to_coins(coin, "nope,nada", tl));  // nothing parsed -> last-good
+
+    // --- GNews (docs shape): two-line greedy wrap at 12 glyphs
+    JsonDocument news;
+    TEST_ASSERT_EQUAL_STRING(
+        "Ok", deserializeJson(news, R"({"totalArticles":2,"articles":[)"
+            R"({"title":"Senate passes short bill","source":{"name":"Reuters"},"url":"x"},)"
+            R"({"title":"Markets rally as the Fed signals two cuts","source":{"name":"Bloomberg"}}]})")
+            .c_str());
+    TEST_ASSERT_TRUE(to_news(news, tl));
+    TEST_ASSERT_EQUAL_INT(2, tl.count);
+    TEST_ASSERT_EQUAL_STRING("Reuters", tl.items[0].label);
+    TEST_ASSERT_EQUAL_STRING("Senate", tl.items[0].l1);
+    TEST_ASSERT_EQUAL_STRING("passes short", tl.items[0].l2);
+    TEST_ASSERT_EQUAL_STRING("Markets", tl.items[1].l1);  // break on the LAST boundary
+    TEST_ASSERT_EQUAL_STRING("rally as the", tl.items[1].l2);
+    TickerItem solo{};
+    // --- Finnhub (docs shape)
+    JsonDocument q;
+    TEST_ASSERT_EQUAL_STRING(
+        "Ok", deserializeJson(q, R"({"c":231.54,"d":2.86,"dp":"1.25","pc":228.68,"t":1727000000})")
+            .c_str());
+    TEST_ASSERT_TRUE(to_stock(q, "AAPL", solo));
+    TEST_ASSERT_EQUAL_STRING("AAPL", solo.label);
+    TEST_ASSERT_EQUAL_STRING("231.54", solo.l1);
+    TEST_ASSERT_EQUAL_STRING("1.25%", solo.l2);
+    JsonDocument q0;
+    TEST_ASSERT_EQUAL_STRING("Ok", deserializeJson(q0, R"({"c":0,"d":0,"dp":"0","pc":0})").c_str());
+    TEST_ASSERT_FALSE(to_stock(q0, "NOPE", solo));  // c:0 = unknown symbol
+    JsonDocument qf;
+    TEST_ASSERT_EQUAL_STRING(
+        "Ok", deserializeJson(qf, R"({"c":228.0,"d":-4.0,"dp":"","pc":232.0})").c_str());
+    TEST_ASSERT_TRUE(to_stock(qf, "MSFT", solo));  // dp missing -> d/pc fallback
+    TEST_ASSERT_EQUAL_STRING("-1.72%", solo.l2);
+
+    // --- URL guards
+    char url[256];
+    TEST_ASSERT_TRUE(coin_url(url, sizeof url, "bitcoin,ethereum"));
+    TEST_ASSERT_EQUAL_STRING(
+        "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum"
+        "&vs_currencies=usd&include_24hr_change=true",
+        url);
+    TEST_ASSERT_FALSE(coin_url(url, sizeof url, "bitcoin&x=1"));    // param injection
+    TEST_ASSERT_FALSE(coin_url(url, sizeof url, "BITCOIN"));         // uppercase ids
+    TEST_ASSERT_FALSE(coin_url(url, sizeof url, "bitcoin,,eth"));    // empty token
+    TEST_ASSERT_FALSE(coin_url(url, sizeof url, "bitcoin,"));        // empty tail
+    TEST_ASSERT_TRUE(news_url(url, sizeof url, "general", "us", "AbCd1234_-."));
+    TEST_ASSERT_TRUE(strstr(url, "gnews.io/api/v4/top-headlines") != nullptr);
+    TEST_ASSERT_FALSE(news_url(url, sizeof url, "general&evil", "us", "AbCd1234_-."));
+    TEST_ASSERT_FALSE(news_url(url, sizeof url, "hacks", "us", "AbCd1234_-."));  // off allowlist
+    TEST_ASSERT_FALSE(news_url(url, sizeof url, "general", "u;", "AbCd1234_-."));
+    TEST_ASSERT_FALSE(news_url(url, sizeof url, "general", "us", "short"));      // <8 chars
+    TEST_ASSERT_FALSE(news_url(url, sizeof url, "general", "us", "bad key"));     // space
+    TEST_ASSERT_TRUE(stock_url(url, sizeof url, "AAPL", "AbCd1234_-."));
+    TEST_ASSERT_FALSE(stock_url(url, sizeof url, "AAPL&x=", "AbCd1234_-."));
+
+    // --- key validation (same allowlist the store gates saves on)
+    nb::config::ApiKeys k{};
+    TEST_ASSERT_TRUE(nb::config::api_keys_valid(k));  // all-empty is valid: "no sources"
+    std::snprintf(k.gnews, sizeof k.gnews, "AbCd1234");
+    TEST_ASSERT_TRUE(nb::config::api_keys_valid(k));
+    std::snprintf(k.gnews, sizeof k.gnews, "AbCd&evil=1");  // would reshape the URL
+    TEST_ASSERT_FALSE(nb::config::api_keys_valid(k));
+
+    // --- slot independence: a published news slot never appears on another
+    nb::data::InfoCache cache;
+    TEST_ASSERT_FALSE(cache.snapshot_ticker(0, &tl));
+    TickerList* w = cache.writable_ticker(0);
+    w->count = 1;
+    copy_str(w->items[0].label, sizeof w->items[0].label, "news-only");
+    cache.publish_ticker(0, 1000);
+    TEST_ASSERT_TRUE(cache.snapshot_ticker(0, &tl));
+    TEST_ASSERT_EQUAL_STRING("news-only", tl.items[0].label);
+    TEST_ASSERT_FALSE_MESSAGE(cache.snapshot_ticker(1, &tl), "stocks slot leaked news data");
+    nb::data::Weather wt{};
+    TEST_ASSERT_FALSE(cache.snapshot_weather(&wt));  // weather slot still empty
+}
+
 static void test_weather_widget(void) {
     nb::data::InfoCache cache;
     bool enabled = true;
@@ -1873,6 +1978,7 @@ int main(void) {
     RUN_TEST(test_data_weather);
     RUN_TEST(test_info_cache_weather);
     RUN_TEST(test_weather_widget);
+    RUN_TEST(test_ticker_decoders);
     RUN_TEST(test_scoreboard_widget);
     RUN_TEST(test_card_producer_compose);
     RUN_TEST(test_compute_pages);

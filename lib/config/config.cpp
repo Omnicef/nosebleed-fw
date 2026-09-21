@@ -119,7 +119,7 @@ void set_defaults(Config& c) {
     c.svc.quiet_brightness = 0;
 
     // WidgetConfig rows
-    c.widget_count = 3 + kLeagueSlugCount;
+    c.widget_count = 6 + kLeagueSlugCount;
     WidgetConfig& splash = c.widgets[0];
     copy_str(splash.id, sizeof(splash.id), "boot_splash");
     copy_str(splash.type, kScoreboardTypeLen, "boot_splash");
@@ -152,6 +152,17 @@ void set_defaults(Config& c) {
         w.order = static_cast<uint16_t>(3 + i);
         w.enabled = (i == 0) ? 1 : 0;  // only mlb
         w.dwell_s = 20.0f;
+    }
+    // T-10.3 ticker rows — present, off by default; enabling one arms both
+    // its cards and its poll slot.
+    static const char* kTickerTypes[] = {"news", "stocks", "crypto"};
+    for (int i = 0; i < 3; ++i) {
+        WidgetConfig& w = c.widgets[3 + kLeagueSlugCount + i];
+        copy_str(w.id, sizeof(w.id), kTickerTypes[i]);
+        copy_str(w.type, kScoreboardTypeLen, kTickerTypes[i]);
+        w.order = static_cast<uint16_t>(3 + kLeagueSlugCount + i);
+        w.enabled = 0;
+        w.dwell_s = 10.0f;
     }
 
     // LeagueConfig(id=slug, enabled=(slug == "mlb")), poll 20/120 from model

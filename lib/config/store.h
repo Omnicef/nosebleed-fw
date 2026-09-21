@@ -42,6 +42,12 @@ bool load_creds(Creds& out);
 bool save_creds(const Creds& c);
 bool clear_creds();
 
+// T-10.3 — ticker API keys: separate blob ("keys"), same discipline as
+// creds — never in Config, never GET, never logged. false = absent or
+// invalid; an all-empty (unset) ApiKeys is valid and means "no sources".
+bool load_keys(ApiKeys& out);
+bool save_keys(const ApiKeys& k);
+
 #ifdef ARDUINO
 // The render task registers itself here at startup; every successful
 // save() sends it a task notification. One writer (web), one listener.

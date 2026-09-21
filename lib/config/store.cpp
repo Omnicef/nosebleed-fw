@@ -19,6 +19,7 @@ namespace {
 constexpr char kNs[] = "nb";
 constexpr char kKey[] = "cfg";
 constexpr char kKeyNet[] = "net";  // T-9.2 — credentials live here, not in cfg
+constexpr char kKeyKeys[] = "keys";  // T-10.3 — ticker API keys, same rule
 TaskHandle_t s_render = nullptr;
 }  // namespace
 
@@ -91,6 +92,34 @@ bool clear_creds() {
     const bool gone = !had || p.remove(kKeyNet);
     p.end();
     return gone;
+}
+
+// T-10.3 — ticker API keys. Separate blob, same no-logging discipline.
+// An absent blob is NOT an error: no keys is a valid steady state
+// (news/stocks off, crypto still works).
+
+bool load_keys(ApiKeys& out) {
+    Preferences p;
+    if (!p.begin(kNs)) {
+        std::memset(&out, 0, sizeof(out));
+        return false;
+    }
+    const size_t len = p.getBytesLength(kKeyKeys);
+    const bool ok = len == sizeof(ApiKeys) &&
+                    p.getBytes(kKeyKeys, &out, sizeof(out)) == sizeof(ApiKeys) &&
+                    api_keys_valid(out);
+    p.end();
+    if (!ok) std::memset(&out, 0, sizeof(out));
+    return ok;
+}
+
+bool save_keys(const ApiKeys& k) {
+    if (!api_keys_valid(k)) return false;
+    Preferences p;
+    if (!p.begin(kNs)) return false;
+    const size_t put = p.putBytes(kKeyKeys, &k, sizeof(k));
+    p.end();
+    return put == sizeof(k);
 }
 
 }  // namespace config
