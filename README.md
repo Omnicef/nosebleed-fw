@@ -4,13 +4,13 @@
 
 A live sports ticker and ambient info display for HUB75 LED matrix panels, driven by an ESP32-S3. Scores update in near real time; a rotating carousel of widgets fills the gaps with a clock, weather, news, stocks and crypto. Everything is configured from a web page served by the device itself — no app, no cloud account, no subscription.
 
-> **Status: Phase 3 of 11 complete — in active development, not yet usable.**
-> The panel driver, render core and logo pipeline work on real hardware. There is no config UI, no data layer and no scoreboard yet. See [`PLAN.md`](PLAN.md) for the roadmap.
+> **Status: Phases 0–9 complete — it works, it isn't finished.**
+> The device provisions over its own WiFi AP, polls live ESPN scores, renders them on the panel and is configured entirely from a browser. Firmware and team-logo updates arrive over the air. Still to come: weather and ticker widgets, a long-run soak, and a deliberate redesign of the cards.
 
 Two things were validated on hardware before any of it was built, and both are recorded with real numbers in [`SPIKE_RESULTS.md`](SPIKE_RESULTS.md):
 
-- **The ESPN payload is tractable.** A single MLB scoreboard response is **1.46 MB**. Streaming it through an ArduinoJson filter retains ~300 bytes per game and costs 13 KB of internal heap — against a measured 262 KB ceiling.
-- **The rendering is pixel-exact.** Card layouts are ported from the Python original and verified by a **zero-pixel diff** against Pillow's output, so the designs survive the rewrite rather than being re-tuned by eye.
+- **The ESPN payload is tractable.** A day's MLB scoreboard is ~298 KB. Streaming it through an ArduinoJson filter retains ~300 bytes per game and costs 13 KB of internal heap, against a measured 262 KB ceiling. The parse itself is 90 ms — the time is all wire.
+- **The rendering is pixel-exact.** Card layouts are ported from a working Python predecessor and verified by a **zero-pixel diff** against Pillow's output, so the designs survived the rewrite rather than being re-tuned by eye.
 
 | Phase | | |
 |---|---|---|
@@ -18,8 +18,15 @@ Two things were validated on hardware before any of it was built, and both are r
 | 1 | Skeleton, partitions, task topology, CI | ✅ |
 | 2 | Render core — canvas, fonts, parity gate | ✅ |
 | 3 | Logo pipeline — 144 teams, 259 KB atlas | ✅ |
-| 4–7 | Config, data layer, widgets, scroll engine | ⬜ |
-| 8–11 | Web UI, provisioning, OTA, hardening | ⬜ |
+| 4 | Config store, NVS, timezone | ✅ |
+| 5 | Data layer — filtered ESPN client, lock-free cache | ✅ |
+| 6 | Cards — every game state, situation indicators | ✅ |
+| 7 | Scroll engine — unified strip, paging, preemption | ✅ |
+| 8 | Web server, `/api/*`, browser config | ✅ |
+| 9 | SoftAP provisioning, ESP-IDF conversion, OTA | ✅ |
+| 10 | Weather and ticker widgets | ⬜ |
+| 11 | Hardening, watchdogs, 72 h soak | ⬜ |
+| 12 | Card redesign | ⬜ |
 
 ## Hardware
 

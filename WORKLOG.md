@@ -1524,4 +1524,6 @@ while the bandwidth doubled: keep the field ≥ 80). (3) raw.githubusercontent
 caches a blob for ~5 min, so a repush can serve a stale ETag — a 304 right
 after a real atlas push is the CDN, not the client. (4) The scratch test
 repo `Omnicef/logos-test` is still up — `gh repo delete` needs the
-delete_repo scope; delete by hand.
+delete_repo scope; delete by hand. *(Deleted by hand 2026-09-21 — 404 +
+GraphQL "could not resolve" confirm it's gone; the raw-URL configured on
+the device was only ever a test fixture.)*
